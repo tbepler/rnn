@@ -1,5 +1,7 @@
 #emacs temp files
 *~
+#*#
+.#*
 
 #fortran mod files
 *.mod
