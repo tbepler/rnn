@@ -1,0 +1,79 @@
+#ifndef INT_T
+#define INT_T integer(c_int)
+#endif
+
+#ifndef FLOAT_T
+#define FLOAT_T real(c_double)
+#define PREFIX d
+#endif
+
+#define PASTE(x) x
+#define EVAL(x,y) PASTE(x)y
+#define NAME(x) EVAL(PREFIX,x)
+
+subroutine NAME(olbfgs)(nu, lambda, eps, t, grad, m, n, x, g, s, y) bind(C)
+
+  use iso_c_binding
+  implicit none
+
+  interface
+     subroutine grad(x, g) bind(C)
+       use iso_c_binding
+       FLOAT_T, intent(in) :: x(*)
+       FLOAT_T, intent(inout) :: g(*)
+     end subroutine grad
+  end interface
+
+  !procedure (grad), pointer, intent(in) :: grad_f
+  FLOAT_T, intent(in), value :: nu, lambda, eps
+  INT_T, intent(in), value :: t, m, n
+  FLOAT_T, intent(inout) :: x(m), g(m), s(m,0:n), y(m,0:n)
+  INT_T :: i, j, k, end
+  FLOAT_T :: alpha(n), beta
+
+  call grad(x, g)
+  j = modulo(t, n+1)
+  end = min(t,n)
+  s(:,j) = -g
+  
+  i=1
+  do while(i <= end)
+     k = modulo(j-i, n+1)
+     alpha(i) = dot_product(s(:,k),s(:,j))/dot_product(s(:,k),y(:,k))
+     s(:,j) = s(:,j) - alpha(i)*y(:,k)
+     i = i+1
+  end do
+  if (t > 0) then
+     beta = 0
+     i = 1
+     do while(i <= end)
+        k = modulo(j-i, n+1)
+        beta = beta + dot_product(s(:,k),y(:,k))/dot_product(y(:,k),y(:,k))
+        i = i+1
+     end do
+     s(:,j) = s(:,j)*beta/end
+     !this is normal lbfgs direction update
+     !k = modulo(j-1, n+1)
+     !s(:,j) = dot_product(s(:,k),y(:,k))/dot_product(y(:,k),y(:,k))*s(:,j)
+  else
+     s(:,j) = eps*s(:,j)
+  endif
+  i=end
+  do while(i >= 1)
+     k = modulo(j-i, n+1)
+     beta = dot_product(y(:,k),s(:,j))/dot_product(y(:,k),s(:,k))
+     s(:,j) = s(:,j) + (alpha(i) - beta)*s(:,k)
+     i = i-1
+  end do
+  s(:,j) = nu*s(:,j)
+  x = x + s(:,j)
+  
+  y(:,j) = lambda*s(:,j) - g
+  call grad(x, g)
+  y(:,j) = y(:,j) + g
+  
+end subroutine NAME(olbfgs)
+  
+#undef PASTE
+#undef EVAL
+#undef NAME

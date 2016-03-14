@@ -1,0 +1,61 @@
+
+#ifndef INT_T
+#define INT_T integer(c_int)
+#endif
+
+#ifndef FLOAT_T
+#define FLOAT_T real(c_double)
+#define GEMM dgemm
+#define PREFIX d
+#endif
+
+#define PASTE(x) x
+#define EVAL(x,y) PASTE(x)y
+#define NAME(x) EVAL(PREFIX,x)
+
+subroutine NAME(convfw)(m, p, n, k, b, W, X, ldx, Y, ldy) bind(C)
+
+  !m is output dimenstion (number of filters)
+  !p is convolution size (window size)
+  !n is input dimension
+  !k is length of input
+  !b is batch size
+  use iso_c_binding
+  implicit none
+  
+  INT_T, intent(in), value :: m, p, n, k, b, ldx, ldy
+  FLOAT_T, intent(in) :: W(m, n*p), X(ldx, k*b)
+  FLOAT_T, intent(out) :: Y(ldy, (k+p-1)*b)
+  INT_T :: i
+  FLOAT_T, parameter :: one = 1
+
+  do i=0,p-1
+     call GEMM('N', 'N', m, k*b, n, one, W(:,i*n+1:i*n+n), m, X, ldx, one &
+          , Y(:,i*b+1:i*b+k*b), ldy)
+  end do
+  
+end subroutine NAME(convfw)
+
+subroutine NAME(convbw)(m, p, n, k, b, W, X, ldx, dY, lddy, dW, dX, lddx) bind(C)
+
+  use iso_c_binding
+  implicit none
+  
+  INT_T, intent(in), value :: m, p, n, k, b, ldx, lddy, lddx
+  FLOAT_T, intent(in) :: W(m, n*p), X(ldx, k*b), dY(lddy, k*b)
+  FLOAT_T, intent(inout) :: dW(m, n*p), dX(lddx, k*b)
+  INT_T :: i
+  FLOAT_T, parameter :: one = 1 !, zero = 0
+
+  do i=0,p-1
+     call GEMM('N', 'T', m, n, (k-i)*b, one, dY(:,i*b+1:k*b), lddy, X(:,1:(k-i)*b), ldx, one &
+          , dW(:,i*n+1:i*n+n), m)
+     call GEMM('T', 'N', n, (k-i)*b, m, one, W(:,i*n+1:i*n+n), m, dY(:,i*b+1:k*b), lddy, one &
+          , dX(:,1:(k-i)*b), lddx)
+  end do
+  
+end subroutine NAME(convbw)
+
+#undef PASTE
+#undef EVAL
+#undef NAME

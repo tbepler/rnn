@@ -1,0 +1,74 @@
+
+#ifndef IDX_T
+#define IDX_T integer(c_int)
+#endif
+
+#ifndef INT_T
+#define INT_T integer(c_int)
+#endif
+
+#ifndef FLOAT_T
+#define FLOAT_T real(c_double)
+#define GEMM dgemm
+#define PREFIX d
+#endif
+
+#define PASTE(x) x
+#define EVAL(x,y) PASTE(x)y
+#define NAME(x) EVAL(PREFIX,x)
+
+subroutine NAME(embedfw)(m, n, b, k, W, X, ldx, Y, ldy) bind(C)
+
+  use iso_c_binding
+  implicit none
+  
+  IDX_T, intent(in), value :: m, n, b, k, ldx, ldy
+  FLOAT_T, intent(in) :: W(m, 0:n-1)
+  INT_T, intent(in) :: X(ldx,k)
+  FLOAT_T, intent(out) :: Y(ldy, b*k)
+  IDX_T :: i,l
+  INT_T :: j
+  
+  !do concurrent (i=1:m,j=1:k)
+  !   Y(i,j) = W(i,x(j))
+  !end do
+
+  do i=1,k
+     do l=1,b
+        j = X(l,i)
+        if(j < 0) then !check for mask value
+           Y(:,(i-1)*b+l) = 0
+        else
+           Y(:,(i-1)*b+l) = W(:,j)
+        endif
+     end do
+  end do
+  
+end subroutine NAME(embedfw)
+
+subroutine NAME(embedbw)(m, n, b, k, X, ldx, dY, lddy, dW) bind(C)
+
+  use iso_c_binding
+  implicit none
+  
+  IDX_T, intent(in), value :: m, n, b, k, ldx, lddy
+  FLOAT_T, intent(in) :: dY(lddy, b*k)
+  INT_T, intent(in) :: X(ldx,k)
+  FLOAT_T, intent(inout) :: dW(m, 0:n-1)
+  IDX_T :: i,l
+  INT_T :: j
+
+  do i=1,k
+     do l=1,b
+        j = X(l,i)
+        if(j >= 0) then !check for mask
+           dW(:,j) = dW(:,j) + dY(:,(i-1)*b+l)
+        endif
+     end do
+  end do
+  
+end subroutine NAME(embedbw)
+
+#undef PASTE
+#undef EVAL
+#undef NAME

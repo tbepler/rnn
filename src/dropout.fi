@@ -1,0 +1,49 @@
+
+#ifndef INT_T
+#define INT_T integer(c_int)
+#endif
+
+#ifndef FLOAT_T
+#define FLOAT_T real(c_double)
+#define PREFIX d
+#endif
+
+#define PASTE(x) x
+#define EVAL(x,y) PASTE(x)y
+#define NAME(x) EVAL(PREFIX,x)
+
+subroutine NAME(dropout)(p, m, n, X, ldx, mask, fwd) bind(C)
+
+  use iso_c_binding
+  implicit none
+
+  real(c_float), intent(in), value :: p
+  INT_T, intent(in), value :: m, n, ldx
+  FLOAT_T, intent(inout) :: X(ldx, n)
+  integer(c_int), intent(inout) :: mask(m, n)
+  integer(c_int), intent(in), value :: fwd
+  INT_T :: i,j
+  real(c_float) :: r
+
+  if(fwd /= 0) then !fill the mask randomly when computing fwd
+     do j=1,n
+        do i=1,m
+           call random_number(r)
+           if (r < p) then
+              mask(i,j) = 1
+           else
+              mask(i,j) = 0
+           endif
+        end do
+     end do
+  endif
+
+  do concurrent(i=1:m, j=1:n)
+     X(i,j) = X(i,j)*mask(i,j)/p
+  end do
+  
+end subroutine NAME(dropout)
+
+#undef PASTE
+#undef EVAL
+#undef NAME

@@ -1,0 +1,297 @@
+import ctypes
+import numpy as np
+import math
+
+lib = ctypes.cdll.LoadLibrary('lib/librnn.so')
+
+class LSTM:
+
+    def __init__(self, input_size, output_size, forget_bias=3):
+        self.inputs = input_size
+        self.outputs = output_size
+        self.weights = np.random.randn(input_size+output_size+1
+                                       , 4*output_size)/math.sqrt(input_size + output_size)
+        self.weights[0,:] = 0 #initialize biases to 0
+        self.weights[0,output_size:2*output_size] = forget_bias
+        self.state = np.zeros((1,6*output_size))
+        self.y0 = np.zeros(output_size)
+        self.yt = np.zeros(output_size)
+
+    def reset(self):
+        self.state[:,:] = 0
+        self.y0[:] = 0
+        self.yt[:] = 0
+
+    #for pickling: do not pickle layer state
+    def __getstate__(self):
+        return (self.inputs, self.outputs, self.weights)
+
+    def __setstate__(self, st):
+        self.inputs = st[0]
+        self.outputs = st[1]
+        self.weights = st[2]
+        self.state = np.zeros((1,6*self.outputs))
+        self.y0 = np.zeros(self.outputs)
+        self.yt = np.zeros(self.outputs)
+
+    def forward(self, x, y=None):
+        assert x.shape[1] == self.inputs
+        k = x.shape[0]
+        if y is None:
+            y = np.zeros((k,self.outputs))
+        else:
+            assert y.shape[1] == self.outputs
+            assert y.shape[0] == k
+
+        #swap y0,yt
+        temp = self.y0
+        self.y0 = self.yt
+        self.yt = temp
+
+        #write last state to s0
+        self.state[0,] = self.state[self.state.shape[0]-1,:]
+
+        #change state matrix size if needed
+        if k+1 != self.state.shape[0]:
+            self.state.resize((k+1,6*self.outputs))
+
+        lib.lstm_forward(   ctypes.c_int(self.outputs)
+                          , ctypes.c_int(self.inputs)
+                          , self.weights.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ctypes.c_int(k)
+                          , x.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ctypes.c_int(self.inputs)
+                          , self.y0.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , self.state.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , y.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ctypes.c_int(self.outputs)
+                          , self.state[1:,].ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ctypes.c_int(self.state.shape[1])
+                         )
+
+        #write last row of y to yt
+        self.yt[:] = y[k-1,:]
+        
+        return y
+
+    def backward(self, x, y, dy, dx=None, dw=None):
+        assert x.shape[1] == self.inputs
+        assert dy.shape[1] == self.outputs
+        assert dy.shape == y.shape
+        k = x.shape[0]
+        assert k == dy.shape[0]
+        if dx is None:
+            dx = np.zeros(x.shape)
+        else:
+            assert dx.shape == x.shape
+        if dw is None:
+            dw = np.zeros(self.weights.shape)
+        else:
+            assert dw.shape == self.weights.shape
+
+        #allocate dS
+        ds = np.zeros(6*self.outputs)
+            
+        lib.lstm_backward(ctypes.c_int(self.outputs), ctypes.c_int(self.inputs)
+                          , self.weights.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ctypes.c_int(k)
+                          , x.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , self.y0.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , y.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , dy.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , self.state.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , self.state[1:,].ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ds.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , dx.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , dw.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                         )
+        return dx, dw
+
+
+#TODO finish this
+class MultiLayerLSTM:
+
+    def __init__(self, input_size, output_size, layers, forget_bias=3):
+        self.inputs = input_size
+        self.outputs = output_size
+        self.layers = layers
+        #weights for layer 0 are 4*m*(m+n+1)
+        #subsequenct weights are 4*m*(m+m+1)
+        self.weights = np.random.randn(input_size+output_size+1
+                                       , 4*output_size)/math.sqrt(input_size + output_size)
+        self.weights[0,:] = 0 #initialize biases to 0
+        self.weights[0,output_size:2*output_size] = forget_bias
+        self.state = np.zeros((1,6*output_size))
+        self.y0 = np.zeros(output_size)
+        self.yt = np.zeros(output_size)
+
+    def reset(self):
+        self.state[:,:] = 0
+        self.y0[:] = 0
+        self.yt[:] = 0
+
+    #for pickling: do not pickle layer state
+    def __getstate__(self):
+        return (self.inputs, self.outputs, self.weights)
+
+    def __setstate__(self, st):
+        self.inputs = st[0]
+        self.outputs = st[1]
+        self.weights = st[2]
+        self.state = np.zeros((1,6*self.outputs))
+        self.y0 = np.zeros(self.outputs)
+        self.yt = np.zeros(self.outputs)
+
+    def forward(self, x, y=None):
+        assert x.shape[1] == self.inputs
+        k = x.shape[0]
+        if y is None:
+            y = np.zeros((k,self.outputs))
+        else:
+            assert y.shape[1] == self.outputs
+            assert y.shape[0] == k
+
+        #swap y0,yt
+        temp = self.y0
+        self.y0 = self.yt
+        self.yt = temp
+
+        #write last state to s0
+        self.state[0,] = self.state[self.state.shape[0]-1,:]
+
+        #change state matrix size if needed
+        if k+1 != self.state.shape[0]:
+            self.state.resize((k+1,6*self.outputs))
+
+        lib.lstm_forward(   ctypes.c_int(self.outputs)
+                          , ctypes.c_int(self.inputs)
+                          , self.weights.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ctypes.c_int(k)
+                          , x.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ctypes.c_int(self.inputs)
+                          , self.y0.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , self.state.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , y.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ctypes.c_int(self.outputs)
+                          , self.state[1:,].ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ctypes.c_int(self.state.shape[1])
+                         )
+
+        #write last row of y to yt
+        self.yt[:] = y[k-1,:]
+        
+        return y
+
+    def backward(self, x, y, dy, dx=None, dw=None):
+        assert x.shape[1] == self.inputs
+        assert dy.shape[1] == self.outputs
+        assert dy.shape == y.shape
+        k = x.shape[0]
+        assert k == dy.shape[0]
+        if dx is None:
+            dx = np.zeros(x.shape)
+        else:
+            assert dx.shape == x.shape
+        if dw is None:
+            dw = np.zeros(self.weights.shape)
+        else:
+            assert dw.shape == self.weights.shape
+
+        #allocate dS
+        ds = np.zeros(6*self.outputs)
+            
+        lib.lstm_backward(ctypes.c_int(self.outputs), ctypes.c_int(self.inputs)
+                          , self.weights.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ctypes.c_int(k)
+                          , x.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , self.y0.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , y.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , dy.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , self.state.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , self.state[1:,].ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , ds.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , dx.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                          , dw.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                         )
+        return dx, dw
+
+def test():
+
+    def num_grad( f, x, eps = 1e-6 ):
+        dx = np.zeros(x.shape)
+        y = f(x)
+        for i in xrange(x.shape[0]):
+            for j in xrange(x.shape[1]):
+                x[i,j] += eps
+                yp = f(x)
+                x[i,j] -= eps
+                dx[i,j] = (yp - y)/eps
+                #x[i,j] -= eps
+                #yl = f(x)
+                #x[i,j] += eps
+                #dx[i,j] = (yp - yl)/(2*eps)
+        return dx
+
+    #data = np.array([0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0], dtype=np.double)
+    data = [-1,1,-1,1]*5
+    data = np.array(data, dtype=np.double)
+    n = len(data)
+    data = np.reshape(data, (n,1))
+    
+    print "Testing forward"
+    lstm = LSTM(1, 1)
+    x = data[0:n-1,]
+    y = np.copy(data[1:n,])
+    yh = lstm.forward(x)
+    print x
+    print yh
+    print lstm.weights
+    #print np.dot(x, lin.weights[1:,])
+    
+    print "Testing backward"
+    err = 0.5*(yh - y)**2
+    dy = yh - y
+    #dy = np.ones(y.shape)
+    dx, dw = lstm.backward(x, yh, dy)
+    print dx[:,0]
+
+    def err_x(x):
+        lstm.reset()
+        return np.sum( 0.5*(lstm.forward(x) - y)**2 )
+
+    def err_w(w):
+        lstm.reset()
+        lstm.weights = w
+        return np.sum( 0.5*(lstm.forward(x) - y)**2 )
+
+    num_dx = num_grad(err_x, x)
+    print num_dx[:,0]
+
+    print np.allclose(dx,num_dx)
+    
+    print dw
+
+    num_dw = num_grad(err_w, lstm.weights)
+    print num_dw
+
+    print np.allclose(dw, num_dw)
+    #num_dx = num_grad(lambda z: np.sum(lin.forward(z)), x)
+    #print num_dx
+
+    #print "Attempting training"
+    #for i in xrange(1000):
+    #    lstm.reset()
+    #    yh = lstm.forward(x)
+    #    err = 0.5*(yh - y)**2
+    #    print i, np.sum(err)
+        #print yh[:,0]
+        #print y[:,0]
+    #    dy = yh - y
+    #    dx, dw = lstm.backward(x, yh, dy)
+    #    lstm.weights -= (1.0/float(n))*dw
+
+    #print yh[:,0]
+    #print y[:,0]
+
+if __name__ == '__main__':
+    test()

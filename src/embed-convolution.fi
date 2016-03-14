@@ -1,0 +1,81 @@
+
+#ifndef IDX_T
+#define IDX_T integer(c_int)
+#endif
+
+#ifndef INT_T
+#define INT_T integer(c_int)
+#endif
+
+#ifndef FLOAT_T
+#define FLOAT_T real(c_double)
+#define GEMM dgemm
+#define PREFIX d
+#endif
+
+#define PASTE(x) x
+#define EVAL(x,y) PASTE(x)y
+#define NAME(x) EVAL(PREFIX,x)
+
+subroutine NAME(emconvfw)(m, p, n, k, b, W, X, ldx, Y, ldy) bind(C)
+
+  !m is output dimenstion (number of filters)
+  !p is convolution size (window size)
+  !n is input dimension
+  !k is length of input
+  !b is batch size
+  use iso_c_binding
+  implicit none
+  
+  IDX_T, intent(in), value :: m, p, n, b, k, ldx, ldy
+  FLOAT_T, intent(in) :: W(m, n*p)
+  INT_T, intent(in) :: X(ldx,k)
+  FLOAT_T, intent(out) :: Y(ldy, b*(k+p-1))
+  IDX_T :: i,l,h
+  INT_T :: j
+  
+  !do concurrent (i=1:m,j=1:k)
+  !   Y(i,j) = W(i,x(j))
+  !end do
+
+  do i=0,k-1
+     do h=0,p-1
+        do l=1,b
+           j = X(l,i+1)
+           if(j >= 0) then !check for mask value
+              Y(:,(i+h)*b+l) = Y(:,(i+h)*b+l) + W(:,h*n+j+1)
+           endif
+        end do
+     end do
+  end do
+  
+end subroutine NAME(emconvfw)
+
+subroutine NAME(emconvbw)(m, p, n, k, b, X, ldx, dY, lddy, dW) bind(C)
+
+  use iso_c_binding
+  implicit none
+  
+  IDX_T, intent(in), value :: m, p, n, b, k, ldx, lddy
+  FLOAT_T, intent(in) :: dY(lddy, b*k)
+  INT_T, intent(in) :: X(ldx,k)
+  FLOAT_T, intent(inout) :: dW(m, n*p)
+  IDX_T :: i,l,h
+  INT_T :: j
+
+  do i=0,k-1
+     do h=0,p-1
+        do l=1,b
+           j = X(l,i+1)
+           if(j >= 0 .and. i+h < k) then !check for mask
+              dW(:,h*n+j+1) = dW(:,h*n+j+1) + dY(:,(i+h)*b+l)
+           endif
+        end do
+     end do
+  end do
+  
+end subroutine NAME(emconvbw)
+
+#undef PASTE
+#undef EVAL
+#undef NAME

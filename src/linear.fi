@@ -1,0 +1,59 @@
+
+#ifndef INT_T
+#define INT_T integer(c_int)
+#endif
+
+#ifndef FLOAT_T
+#define FLOAT_T real(c_double)
+#define GEMM dgemm
+#define PREFIX d
+#endif
+
+#define PASTE(x) x
+#define EVAL(x,y) PASTE(x)y
+#define NAME(x) EVAL(PREFIX,x)
+
+subroutine NAME(linearfw)(m, n, k, W, X, ldx, Y, ldy) bind(C)
+
+  use iso_c_binding
+  implicit none
+  
+  INT_T, intent(in), value :: m, n, k, ldx, ldy
+  FLOAT_T, intent(in) :: W(m, n+1), X(ldx, k)
+  FLOAT_T, intent(out) :: Y(ldy, k)
+  INT_T :: i,j
+  FLOAT_T, parameter :: one = 1
+
+  !write bias to Y
+  do concurrent (i=1:m,j=1:k)
+     Y(i,j) = W(i,1)
+  end do
+  
+  !multiply W*X and add to Y
+  call GEMM('N', 'N', m, k, n, one, W(:,2:), m, X, ldx, one, Y, ldy)
+  
+end subroutine NAME(linearfw)
+
+subroutine NAME(linearbw)(m, n, k, W, X, ldx, dY, lddy, dW, dX, lddx) bind(C)
+
+  use iso_c_binding
+  implicit none
+  
+  INT_T, intent(in), value :: m, n, k, ldx, lddy, lddx
+  FLOAT_T, intent(in) :: W(m, n+1), X(ldx, k), dY(lddy, k)
+  FLOAT_T, intent(inout) :: dW(m, n+1), dX(lddx, k)
+  INT_T :: i,j
+  FLOAT_T, parameter :: one = 1, zero = 0
+
+  do concurrent (i=1:m,j=1:k)
+     dW(i,1) = dW(i,1) + dY(i,j) !add to bias
+  end do
+  call GEMM('N', 'T', m, n, k, one, dY, lddy, X, ldx, one, dW(:,2:), m)
+  
+  call GEMM('T', 'N', n, k, m, one, W(:,2:), m, dY, lddy, zero, dX, lddx)
+  
+end subroutine NAME(linearbw)
+
+#undef PASTE
+#undef EVAL
+#undef NAME

@@ -1,0 +1,36 @@
+#ifndef INT_T
+#define INT_T integer(c_int)
+#endif
+
+#ifndef FLOAT_T
+#define FLOAT_T real(c_double)
+#define PREFIX d
+#endif
+
+#define PASTE(x) x
+#define EVAL(x,y) PASTE(x)y
+#define NAME(x) EVAL(PREFIX,x)
+
+subroutine NAME(rmsprop)(nu, rho, eps, n, g, x, g2) bind(C)
+
+  use iso_c_binding
+  implicit none
+
+  FLOAT_T, intent(in), value :: nu, rho, eps
+  INT_T, intent(in), value :: n
+  FLOAT_T, intent(in) :: g(n)
+  FLOAT_T, intent(inout) :: x(n), g2(n)
+  INT_T :: i
+  FLOAT_T :: dxi
+
+  do concurrent(i=1:n)
+     g2(i) = rho*g2(i) + (1-rho)*g(i)*g(i)
+     dxi = nu*g(i)/sqrt(g2(i) + eps)
+     x(i) = x(i) - dxi
+  end do
+  
+end subroutine NAME(rmsprop)
+  
+#undef PASTE
+#undef EVAL
+#undef NAME

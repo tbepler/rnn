@@ -1,0 +1,150 @@
+
+#ifndef IDX_T
+#define IDX_T integer(c_int)
+#endif
+
+#ifndef FLOAT_T
+#define FLOAT_T real(c_double)
+#define PREFIX d
+#endif
+
+#define PASTE(x) x
+#define EVAL(x,y) PASTE(x)y
+#define NAME(x) EVAL(PREFIX,x)
+
+subroutine NAME(softmaxfw)(m, n, X, ldx, Y, ldy) bind(C)
+
+  use iso_c_binding
+  implicit none
+  
+  IDX_T, intent(in), value :: m, n, ldx, ldy
+  FLOAT_T, intent(in) :: X(ldx, n)
+  FLOAT_T, intent(out) :: Y(ldy, n)
+  FLOAT_T :: s
+  IDX_T :: i
+
+  do concurrent(i=1:n)
+     !this version is not numerically stable!
+     !Y(1:m,i) = exp(X(1:m,i))
+     !Y(1:m,i) = Y(:,i)/sum(Y(1:m,i))
+     !use this instead!
+     s = maxval(X(1:m,i))
+     s = s + log(sum(exp(X(1:m,i)-s)))
+     Y(1:m,i) = exp(X(1:m,i)-s)
+  end do
+  
+end subroutine NAME(softmaxfw)
+
+FLOAT_T function NAME(icentfw)(m, b, k, Yh, ldyh, Y, ldy) bind(C)
+
+  use iso_c_binding
+  implicit none
+  
+  IDX_T, intent(in), value :: m, b, k, ldyh, ldy
+  FLOAT_T, intent(in) :: Yh(0:ldyh-1, b*k)
+  integer(c_int), intent(in) :: Y(ldy,k)
+  integer(c_int) :: l
+  IDX_T :: i,j,n
+  FLOAT_T :: err
+
+  n = 0
+  err = 0
+  do j=1,k
+     do i=1,b
+        l = Y(i,j)
+        if (l >= 0 .and. l < m) then
+           err = err - log(Yh(l,(j-1)*b+i))
+           !n = n + 1
+        endif
+     end do
+  end do
+
+  NAME(icentfw) = err !/n
+  
+end function NAME(icentfw)
+
+FLOAT_T function NAME(lcentfw)(m, b, k, Yh, ldyh, Y, ldy) bind(C)
+
+  use iso_c_binding
+  implicit none
+  
+  IDX_T, intent(in), value :: m, b, k, ldyh, ldy
+  FLOAT_T, intent(in) :: Yh(0:ldyh-1, b*k)
+  integer(c_long), intent(in) :: Y(ldy,k)
+  integer(c_long) :: l
+  IDX_T :: i,j,n
+  FLOAT_T :: err
+
+  n = 0
+  err = 0
+  do j=1,k
+     do i=1,b
+        l = Y(i,j)
+        if (l >= 0 .and. l < m) then
+           err = err - log(Yh(l,(j-1)*b+i))
+           !n = n + 1
+        endif
+     end do
+  end do
+
+  NAME(lcentfw) = err !/n
+  
+end function NAME(lcentfw)
+
+subroutine NAME(ientmaxbw)(m, b, k, Yh, ldyh, Y, ldy, dX, lddx) bind(C)
+
+  use iso_c_binding
+  implicit none
+
+  IDX_T, intent(in), value :: m, b, k, ldyh, ldy, lddx
+  FLOAT_T, intent(in) :: Yh(ldyh, b*k)
+  integer(c_int), intent(in) :: Y(ldy, k)
+  FLOAT_T, intent(out) :: dX(0:lddx-1, b*k)
+  IDX_T :: i,j,n
+
+  n = 0
+  do j=1,k
+     do i=1,b
+        if (Y(i,j) < 0 .or. Y(i,j) >= m) then !check for mask
+           dX(0:m-1,(j-1)*b+i) = 0
+        else
+           dX(0:m-1,(j-1)*b+i) = Yh(1:m,(j-1)*b+i)
+           dX(Y(i,j),(j-1)*b+i) = dX(Y(i,j),(j-1)*b+i) - 1
+           !n = n + 1
+        endif
+     end do
+  end do
+  dX = dX !/n
+  
+end subroutine NAME(ientmaxbw)
+
+subroutine NAME(lentmaxbw)(m, b, k, Yh, ldyh, Y, ldy, dX, lddx) bind(C)
+
+  use iso_c_binding
+  implicit none
+
+  IDX_T, intent(in), value :: m, b, k, ldyh, ldy, lddx
+  FLOAT_T, intent(in) :: Yh(ldyh, b*k)
+  integer(c_long), intent(in) :: Y(ldy, k)
+  FLOAT_T, intent(out) :: dX(0:lddx-1, b*k)
+  IDX_T :: i,j,n
+
+  n = 0
+  do j=1,k
+     do i=1,b
+        if (Y(i,j) < 0 .or. Y(i,j) >= m) then !check for mask
+           dX(0:m-1,(j-1)*b+i) = 0
+        else
+           dX(0:m-1,(j-1)*b+i) = Yh(1:m,(j-1)*b+i)
+           dX(Y(i,j),(j-1)*b+i) = dX(Y(i,j),(j-1)*b+i) - 1
+           !n = n + 1
+        endif
+     end do
+  end do
+  dX = dX !/n
+  
+end subroutine NAME(lentmaxbw)
+
+#undef PASTE
+#undef EVAL
+#undef NAME
