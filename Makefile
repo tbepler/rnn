@@ -10,7 +10,7 @@ OMP := -lgomp
 MKLROOT := /opt/intel/mkl
 MKL :=  -Wl,--start-group ${MKLROOT}/lib/intel64/libmkl_gf_lp64.a ${MKLROOT}/lib/intel64/libmkl_core.a ${MKLROOT}/lib/intel64/libmkl_gnu_thread.a -Wl,--end-group -ldl -lpthread -lm
 
-FFLAGS := -Wall -Wextra -cpp -ffree-form -std=f2008 -O3 -fpic -fopenmp -march=native -mtune=native -ftree-vectorize -ftree-vectorizer-verbose=8 -fopt-info-vec-optimized -mfpmath=sse -ffast-math
+FFLAGS := -Wall -Wextra -cpp -ffree-form -std=f2008 -O3 -fpic -fopenmp -march=native -mtune=native -ftree-vectorize -ftree-vectorizer-verbose=8 -fopt-info-vec-optimized -mfpmath=sse -ffast-math -fall-intrinsics
 CFLAGS := -Wall -Wextra -pedantic -std=c11 -O3 -fpic -fopenmp -march=native -ffast-math -ftree-vectorizer-verbose=8 -fopt-info-vec-optimized
 LDFLAGS := -fopenmp
 
