@@ -11,6 +11,14 @@ module lstm_module
   public :: slstmbw
   public :: dlstmencbw
   public :: slstmencbw
+  public :: dlstmrfw
+  public :: slstmrfw
+  public :: dlstmrbw
+  public :: slstmrbw
+  !public :: dbilstmfw
+  !public :: sbilstmfw
+  !public :: dbilstmbw
+  !public :: sbilstmbw
   
 contains
 

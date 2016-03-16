@@ -121,7 +121,11 @@ class BiLSTM(object):
         (k,b,_) = X.shape
         #self.advance()
         self.resize_fwd(k, b, W.dtype)
-        algo.bilstmfw(W, X, self.S, self._Y)
+        #algo.bilstmfw(W, X, self.S, self._Y)
+        algo.lstmfw(W[0:self._outputs+self.inputs+1], X, self.S[0:-1,:,0:6*self._outputs]
+                    , self._Y[0:-1,:,0:self._outputs])
+        algo.lstmrfw(W[self._outputs+self.inputs+1:], X, self.S[1:,:,6*self._outputs:]
+                     , self._Y[1:,:,self._outputs:])
         self.X = X
         return self._Y[1:-1]
 
@@ -129,7 +133,15 @@ class BiLSTM(object):
         (k,b,_) = dY.shape
         self.resize_bwd(k, b, W.dtype)
         #dW[:] = 0
-        algo.bilstmbw(self.tau, W, self.X, self.S, self._Y, dY, dW, self.dX, self.dS)
+        #algo.bilstmbw(self.tau, W, self.X, self.S, self._Y, dY, dW, self.dX, self.dS)
+        algo.lstmbw(self.tau, W[0:self._outputs+self.inputs+1], self.X
+                    , self.S[0:-1,:,0:6*self._outputs], self._Y[0:-1,:,0:self._outputs]
+                    , dY[:,:,0:self._outputs], dW[0:self._outputs+self.inputs+1]
+                    , self.dX, self.dS[0:-1,:,0:6*self._outputs])
+        algo.lstmrbw(self.tau, W[self._outputs+self.inputs+1:], self.X
+                     , self.S[1:,:,6*self._outputs:], self._Y[1:,:,self._outputs:]
+                     , dY[:,:,self._outputs:], dW[self._outputs+self.inputs+1:]
+                     , self.dX, self.dS[1:,:,6*self._outputs:])
         return self.dX
 
 if __name__ == '__main__':
