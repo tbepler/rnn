@@ -46,6 +46,7 @@ def layer(layer, ins=None, outs=None, b=5, n=10, init_x=np.random.randn, type_x=
     
     print "Running forward..."    
     yh = layer.forward(w, x).copy()
+    print yh
     
     error_f = err_f.init(yh.shape, dtype=float_t)
     dy = error_f.grad(yh)

@@ -150,6 +150,183 @@ def lstmencbw(tau, W, X, S, Y, dY, dW, dX, dS):
       , as_ptr(dS, float_t)
       , ldds)
 
+def lstmrfw(W, X, S, Y):
+    #check dimensions
+    (p,batches,m) = Y.shape
+    p -= 1
+    n = X.shape[2]
+    assert X.shape == (p,batches,n)
+    assert W.shape == (m+n+1, 4*m)
+    assert S.shape == (p+1,batches,6*m)
+
+    ldx = X.strides[1]/X.itemsize
+    lds = S.strides[1]/S.itemsize
+    ldy = Y.strides[1]/Y.itemsize
+    
+    #dispatch function by type
+    assert W.dtype == X.dtype == S.dtype == Y.dtype
+    if W.dtype == np.float32:
+        float_t = ctypes.c_float
+        f = lib.slstmrfw
+    elif W.dtype == np.float64:
+        float_t = ctypes.c_double
+        f = lib.dlstmrfw
+    else:
+        raise Exception("lstmrfw: unsupported type, {}".format(W.dtype))
+
+    f(ctypes.c_int(m)
+      , ctypes.c_int(n)
+      , ctypes.c_int(batches)
+      , ctypes.c_int(p)
+      , X.ctypes.data_as(ctypes.POINTER(float_t))
+      , ctypes.c_int(ldx)
+      , W.ctypes.data_as(ctypes.POINTER(float_t))
+      , Y.ctypes.data_as(ctypes.POINTER(float_t))
+      , ctypes.c_int(ldy)
+      , S.ctypes.data_as(ctypes.POINTER(float_t))
+      , ctypes.c_int(lds))
+
+def lstmrbw(tau, W, X, S, Y, dY, dW, dX, dS):
+    #check dimensions
+    (p,batches,n) = X.shape
+    m = Y.shape[2]
+    assert Y.shape == (p+1,batches,m)
+    assert W.shape == (m+n+1, 4*m)
+    assert S.shape == (p+1,batches,6*m)
+    assert W.shape == dW.shape
+    assert X.shape == dX.shape
+    assert dS.shape == S.shape
+
+    #dispatch function by type
+    assert W.dtype == X.dtype == S.dtype == Y.dtype == dY.dtype == dW.dtype == dX.dtype == dS.dtype
+    if W.dtype == np.float32:
+        float_t = ctypes.c_float
+        f = lib.slstmrbw
+    elif W.dtype == np.float64:
+        float_t = ctypes.c_double
+        f = lib.dlstmrbw
+    else:
+        raise Exception("lstmrbw: unsupported type, {}".format(W.dtype))
+    
+    ldx = ctypes.c_int(X.strides[1]/X.itemsize)
+    lds = ctypes.c_int(S.strides[1]/S.itemsize)
+    ldy = ctypes.c_int(Y.strides[1]/Y.itemsize)
+    lddy = ctypes.c_int(dY.strides[1]/dY.itemsize)
+    lddx = ctypes.c_int(dX.strides[1]/dX.itemsize)
+    ldds = ctypes.c_int(dS.strides[1]/dS.itemsize)
+
+    f(float_t(tau)
+      , ctypes.c_int(m)
+      , ctypes.c_int(n)
+      , ctypes.c_int(batches)
+      , ctypes.c_int(p)
+      , as_ptr(X, float_t)
+      , ldx
+      , as_ptr(W, float_t)
+      , as_ptr(Y, float_t)
+      , ldy
+      , as_ptr(S, float_t)
+      , lds
+      , as_ptr(dY, float_t)
+      , lddy
+      , as_ptr(dX, float_t)
+      , lddx
+      , as_ptr(dW, float_t)
+      , as_ptr(dS, float_t)
+      , ldds)
+
+"""
+def bilstmfw(W, X, S, Y):
+    #check dimensions
+    (p,batches,m) = Y.shape
+    m /= 2
+    p -= 2
+    n = X.shape[2]
+    assert X.shape == (p,batches,n)
+    assert W.shape == (2*(m+n+1), 4*m)
+    assert S.shape == (p+2,batches,12*m)
+
+    ldx = X.strides[1]/X.itemsize
+    lds = S.strides[1]/S.itemsize
+    ldy = Y.strides[1]/Y.itemsize
+    
+    #dispatch function by type
+    assert W.dtype == X.dtype == S.dtype == Y.dtype
+    if W.dtype == np.float32:
+        float_t = ctypes.c_float
+        f = lib.sbilstmfw
+    elif W.dtype == np.float64:
+        float_t = ctypes.c_double
+        f = lib.dbilstmfw
+    else:
+        raise Exception("bilstmfw: unsupported type, {}".format(W.dtype))
+
+    f(ctypes.c_int(m)
+      , ctypes.c_int(n)
+      , ctypes.c_int(batches)
+      , ctypes.c_int(p)
+      , X.ctypes.data_as(ctypes.POINTER(float_t))
+      , ctypes.c_int(ldx)
+      , W.ctypes.data_as(ctypes.POINTER(float_t))
+      , Y.ctypes.data_as(ctypes.POINTER(float_t))
+      , ctypes.c_int(ldy)
+      , S.ctypes.data_as(ctypes.POINTER(float_t))
+      , ctypes.c_int(lds))
+
+    print "Returning from bilstmfw"
+    import sys
+    sys.stdout.flush()
+
+def bilstmbw(tau, W, X, S, Y, dY, dW, dX, dS):
+    #check dimensions
+    (p,batches,n) = X.shape
+    m = Y.shape[2]/2
+    assert Y.shape == (p+2,batches,2*m)
+    assert W.shape == (2*(m+n+1), 4*m)
+    assert S.shape == (p+2,batches,12*m)
+    assert W.shape == dW.shape
+    assert X.shape == dX.shape
+    assert dS.shape == S.shape
+
+    #dispatch function by type
+    assert W.dtype == X.dtype == S.dtype == Y.dtype == dY.dtype == dW.dtype == dX.dtype == dS.dtype
+    if W.dtype == np.float32:
+        float_t = ctypes.c_float
+        f = lib.sbilstmbw
+    elif W.dtype == np.float64:
+        float_t = ctypes.c_double
+        f = lib.dbilstmbw
+    else:
+        raise Exception("bilstmbw: unsupported type, {}".format(W.dtype))
+    
+    ldx = ctypes.c_int(X.strides[1]/X.itemsize)
+    lds = ctypes.c_int(S.strides[1]/S.itemsize)
+    ldy = ctypes.c_int(Y.strides[1]/Y.itemsize)
+    lddy = ctypes.c_int(dY.strides[1]/dY.itemsize)
+    lddx = ctypes.c_int(dX.strides[1]/dX.itemsize)
+    ldds = ctypes.c_int(dS.strides[1]/dS.itemsize)
+
+    f(float_t(tau)
+      , ctypes.c_int(m)
+      , ctypes.c_int(n)
+      , ctypes.c_int(batches)
+      , ctypes.c_int(p)
+      , as_ptr(X, float_t)
+      , ldx
+      , as_ptr(W, float_t)
+      , as_ptr(Y, float_t)
+      , ldy
+      , as_ptr(S, float_t)
+      , lds
+      , as_ptr(dY, float_t)
+      , lddy
+      , as_ptr(dX, float_t)
+      , lddx
+      , as_ptr(dW, float_t)
+      , as_ptr(dS, float_t)
+      , ldds)
+"""
+
 def emlstmfw(W, X, S, Y):
     #check dimensions
     (p,batches,m) = Y.shape

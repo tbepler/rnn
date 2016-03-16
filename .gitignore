@@ -6,6 +6,12 @@
 #fortran mod files
 *.mod
 
+#obj dir
+obj/
+
+#lib dir
+lib/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

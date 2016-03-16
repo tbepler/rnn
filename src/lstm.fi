@@ -39,28 +39,38 @@ pure FLOAT_T function NAME(fast_sigmoid_grad)(y) result(x)
   x = NAME(fast_tanh_grad)(2*y - 1)/2
 end function NAME(fast_sigmoid_grad)
   
-subroutine NAME(lstm_activations)(m, b, W, S, Y)
-  INT_T, intent(in) :: m, b
-  FLOAT_T, intent(in) :: W(4*m)
-  FLOAT_T, intent(inout) :: S(6*m,2*b)
-  FLOAT_T, intent(out) :: Y(m,2*b)
+subroutine NAME(lstm_activations)(m, b, W, Sprev, S, lds, Y, ldy)
+  INT_T, intent(in) :: m, b, lds, ldy
+  FLOAT_T, intent(in) :: W(4*m), Sprev(lds,b)
+  FLOAT_T, intent(inout) :: S(lds,b)
+  FLOAT_T, intent(out) :: Y(ldy,b)
   INT_T :: i, j
-  
-  do concurrent (i=1:m, j=b+1:2*b)
+
+  !integer :: l
+  !l = loc(W)
+  !write(*,*) l
+  !l = loc(Sprev)
+  !write(*,*) l
+  !l = loc(S)
+  !write(*,*) l
+  !l = loc(Y)
+  !write(*,*) l
+
+  do concurrent (i=1:m, j=1:b)
      S(i,j) = NAME(fast_sigmoid)(S(i,j) + W(i)) !Input gate
      S(m+i,j) = NAME(fast_sigmoid)(S(m+i,j) + W(m+i)) !Forget gate
      S(2*m+i,j) = NAME(fast_sigmoid)(S(2*m+i,j) + W(2*m+i)) !Output gate
      S(3*m+i,j) = NAME(fast_tanh)(S(3*m+i,j) + W(3*m+i)) !Activation gate
-     S(4*m+i,j) = S(i,j)*S(3*m+i,j) + S(m+i,j)*S(4*m+i,j-b) !Update C
+     S(4*m+i,j) = S(i,j)*S(3*m+i,j) + S(m+i,j)*Sprev(4*m+i,j) !Update C
      S(5*m+i,j) = NAME(fast_tanh)(S(4*m+i, j)) !Ct
      Y(i,j) = S(2*m+i,j)*S(5*m+i,j) !Y
   end do
     
 end subroutine NAME(lstm_activations)
   
-subroutine NAME(lstm_activations_grad)(tau, m, b, dY, lddy, S, lds, dSprev, dS, ldds, dW)
+subroutine NAME(lstm_activations_grad)(tau, m, b, dY, lddy, Sprev, S, lds, dSprev, dS, ldds, dW)
   INT_T, intent(in) :: m, b, lddy, lds, ldds
-  FLOAT_T, intent(in) :: dY(lddy, b), S(lds, 2*b), tau
+  FLOAT_T, intent(in) :: dY(lddy, b), Sprev(lds,b), S(lds, b), tau
   FLOAT_T, intent(inout) :: dSprev(ldds, b), dS(ldds, b), dW(4*m)
   INT_T :: i, j
   FLOAT_T :: n
@@ -70,14 +80,14 @@ subroutine NAME(lstm_activations_grad)(tau, m, b, dY, lddy, S, lds, dSprev, dS, 
   !   do i=1,m
   do concurrent (i=1:m, j=1:b)
      dS(5*m+i,j) = dS(5*m+i,j) + dY(i,j) !dH
-     dS(4*m+i,j) = dS(4*m+i,j) + NAME(fast_tanh_grad)(S(5*m+i,j+b))*S(2*m+i,j+b)*dS(5*m+i,j) !dC
-     dS(i,j) = S(3*m+i,j+b)*dS(4*m+i,j)*NAME(fast_sigmoid_grad)(S(i,j+b)) !dI
+     dS(4*m+i,j) = dS(4*m+i,j) + NAME(fast_tanh_grad)(S(5*m+i,j))*S(2*m+i,j)*dS(5*m+i,j) !dC
+     dS(i,j) = S(3*m+i,j)*dS(4*m+i,j)*NAME(fast_sigmoid_grad)(S(i,j)) !dI
      !dW(i) = dW(i) + dS(i,j)
-     dS(m+i,j) = S(4*m+i,j)*dS(4*m+i,j)*NAME(fast_sigmoid_grad)(S(m+i,j+b)) !dF
+     dS(m+i,j) = Sprev(4*m+i,j)*dS(4*m+i,j)*NAME(fast_sigmoid_grad)(S(m+i,j)) !dF
      !dW(m+i) = dW(m+i) + dS(m+i,j)
-     dS(2*m+i,j) = S(5*m+i,j+b)*dS(5*m+i,j)*NAME(fast_sigmoid_grad)(S(2*m+i,j+b)) !dO
+     dS(2*m+i,j) = S(5*m+i,j)*dS(5*m+i,j)*NAME(fast_sigmoid_grad)(S(2*m+i,j)) !dO
      !dW(2*m+i) = dW(2*m+i) + dS(2*m+i,j)
-     dS(3*m+i,j) = S(i,j+b)*dS(4*m+i,j)*NAME(fast_tanh_grad)(S(3*m+i,j+b)) !dG
+     dS(3*m+i,j) = S(i,j)*dS(4*m+i,j)*NAME(fast_tanh_grad)(S(3*m+i,j)) !dG
      !dW(3*m+i) = dW(3*m+i) + dS(3*m+i,j)
      !dSprev(4*m+i,j) = dS(4*m+i,j)*S(m+i,j+b) !update next dC
   !   end do
@@ -92,7 +102,7 @@ subroutine NAME(lstm_activations_grad)(tau, m, b, dY, lddy, S, lds, dSprev, dS, 
          dS(:,j) = tau*dS(:,j)/n
      endif
      dW = dW + dS(:4*m,j)
-     dSprev(4*m:5*m,j) = dS(4*m:5*m,j)*S(m:2*m,j+b)
+     dSprev(4*m:5*m,j) = dS(4*m:5*m,j)*S(m:2*m,j)
   end do
   
 end subroutine NAME(lstm_activations_grad)
@@ -114,7 +124,8 @@ subroutine NAME(lstm_small_batch)(m, n, b, p, X, ldx, W, Y, ldy, S, lds)
      call GEMM('N', 'N', 4*m, b, m, one, W(:,n+2:), 4*m, Y(:,offset+1:), ldy, one &
           , S(:,offset+b+1:), lds)
      !compute activations for each unit in each batch
-     call NAME(lstm_activations)(m, b, W, S(:,offset+1:), Y(:,offset+1:))
+     call NAME(lstm_activations)(m, b, W, S(:,offset+1:), S(:,offset+b+1), lds &
+          , Y(:,offset+b+1:), ldy)
   end do
     
 end subroutine NAME(lstm_small_batch)
@@ -136,10 +147,44 @@ subroutine NAME(lstm_large_batch)(m, n, b, p, X, ldx, W, Y, ldy, S, lds)
      call GEMM('N', 'N', 4*m, b, m, one, W(:,n+2:), 4*m, Y(:,offset+1:), ldy, one &
           , S(:,offset+b+1:), lds)
      !compute activations for each unit in each batch
-     call NAME(lstm_activations)(m, b, W, S(:,offset+1:), Y(:,offset+1:))
+     call NAME(lstm_activations)(m, b, W, S(:,offset+1:), S(:,offset+b+1:), lds &
+          , Y(:,offset+b+1:), ldy)
   end do
     
 end subroutine NAME(lstm_large_batch)
+
+subroutine NAME(lstm_large_batch_reverse)(m, n, b, p, X, ldx, W, Y, ldy, S, lds)
+  INT_T, intent(in) :: m, n, b, p, ldx, ldy, lds
+  FLOAT_T, intent(in) :: X(ldx,b*p), W(4*m,m+n+1)
+  FLOAT_T, intent(inout) :: Y(ldy,b*p+b), S(lds,b*p+b)
+  INT_T :: i, offset
+  FLOAT_T, parameter :: one = 1, zero = 0
+
+  !write(*,*) "Starting lstm_large_batch_reverse"
+  !write(*,*) size(X), size(W), size(Y), size(S)
+  !multiply X by the weights corresponding to X and write to S
+  call GEMM('N', 'N', 4*m, b*p, n, one, W(:,2:), 4*m, X, ldx, zero, S(:,:b*p), lds)
+
+  !write(*,*) "Finished gemm"
+  !compute sequential activations
+  do i=p-1,0,-1
+     offset = i*b
+     !write(*,*) "i=", i, "offset=", offset
+     !flush(6)
+     !multiply Y(prev) by the weights corresponding to Y and add to S
+     call GEMM('N', 'N', 4*m, b, m, one, W(:,n+2:), 4*m, Y(:,offset+b+1:), ldy, one &
+          , S(:,offset+1:), lds)
+     !compute activations for each unit in each batch
+     !write(*,*) "Computing activations"
+     !write(*,*) size(S(:,offset+b+1:)), size(S(:,offset+1:)), size(Y(:,offset+1:))
+     call NAME(lstm_activations)(m, b, W, S(:,offset+b+1:), S(:,offset+1:), lds &
+          , Y(:,offset+1:), ldy)
+     !write(*,*) "Finished activations"
+  end do
+
+  !write(*,*) "Finished lstm_large_batch_reverse"
+    
+end subroutine NAME(lstm_large_batch_reverse)
   
 subroutine NAME(lstmfw)(m, n, b, p, X, ldx, W, Y, ldy, S, lds) BIND(C)
   use iso_c_binding
@@ -162,6 +207,45 @@ subroutine NAME(lstmfw)(m, n, b, p, X, ldx, W, Y, ldy, S, lds) BIND(C)
   
 end subroutine NAME(lstmfw)
 
+subroutine NAME(lstmrfw)(m, n, b, p, X, ldx, W, Y, ldy, S, lds) BIND(C)
+  use iso_c_binding
+  implicit none
+
+  INT_T, intent(in), value :: m, n, b, p, ldx, ldy, lds
+  FLOAT_T, intent(in) :: X(ldx,b*p), W(4*m,m+n+1)
+  FLOAT_T, intent(inout) :: Y(ldy,b*p+b), S(lds,b*p+b)
+
+  call NAME(lstm_large_batch_reverse)(m, n, b, p, X, ldx, W, Y, ldy, S, lds)
+  
+end subroutine NAME(lstmrfw)
+
+!subroutine NAME(bilstmfw)(m, n, b, p, X, ldx, W, Y, ldy, S, lds) BIND(C)
+!  use iso_c_binding
+!  implicit none
+
+  ! m is output size
+  ! n is input size
+  ! b is number of batches
+  ! p is length of sequence
+!  INT_T, intent(in), value :: m, n, b, p, ldx, ldy, lds
+!  FLOAT_T, intent(in) :: X(ldx,b*p), W(4*m,2*(m+n+1))
+!  FLOAT_T, intent(inout) :: Y(ldy,b*p+2*b), S(lds,b*p+2*b)
+
+!  write(*,*) "Starting bilstmfw"
+
+  !compute forward direction
+!  call NAME(lstm_large_batch)(m, n, b, p, X, ldx, W(:,:m+n+1), Y(:,:b*p+b), ldy &
+!       , S(:,:b*p+b), lds)
+!  write(*,*) "Forward direction done"
+  !compute reverse direction
+!  write(*,*) size(W(:,m+n+2:)), size(Y(m+1:,b+1:)), size(S(6*m+1:,b+1:))
+!  call NAME(lstm_large_batch_reverse)(m, n, b, p, X, ldx, W(:,m+n+2:), Y(m+1:,b+1:), ldy &
+!       , S(6*m+1:,b+1:), lds)
+!  write(*,*) "Reverse direction done"
+!  flush(6)
+
+!end subroutine NAME(bilstmfw)
+
 subroutine NAME(lstmbw)(tau, m, n, b, p, X, ldx, W, Y, ldy, S, lds, dY, lddy &
      , dX, lddx, dW, dS, ldds) BIND(C) 
 
@@ -172,15 +256,15 @@ subroutine NAME(lstmbw)(tau, m, n, b, p, X, ldx, W, Y, ldy, S, lds, dY, lddy &
   FLOAT_T, intent(in), value :: tau
   FLOAT_T, intent(in) :: X(ldx,b*p), W(4*m,m+n+1), Y(ldy,b*p+b) &
                        , S(lds,b*p+b), dY(lddy,b*p)
-  FLOAT_T, intent(inout) :: dW(4*m,m+n+1), dS(ldds,b*p+p)
+  FLOAT_T, intent(inout) :: dW(4*m,m+n+1), dS(ldds,b*p+b)
   FLOAT_T, intent(out) :: dX(lddx,b*p)
   FLOAT_T, parameter :: one = 1, zero = 0
   INT_T :: i,offset
 
   do i=p-1,0,-1
      offset = i*b
-     call NAME(lstm_activations_grad)(tau, m, b, dY(:,offset+1:), lddy, S(:,offset+1:), lds &
-          , dS(:,offset+1:), dS(:,offset+b+1:), ldds, dW(:,1))
+     call NAME(lstm_activations_grad)(tau, m, b, dY(:,offset+1:), lddy, S(:,offset+1:) &
+          , S(:,offset+b+1), lds, dS(:,offset+1:), dS(:,offset+b+1:), ldds, dW(:,1))
      !dH = Wy.T * dS, need to access dH as dS(5*m+1,1) to pass reference to dS without copying
      call GEMM('T', 'N', m, b, 4*m, one, W(:,n+2:), 4*m, dS(:,offset+b+1:), ldds &
           , zero, dS(5*m+1,offset+1), ldds)   
@@ -190,9 +274,95 @@ subroutine NAME(lstmbw)(tau, m, n, b, p, X, ldx, W, Y, ldy, S, lds, dY, lddy &
   !add dS*Yprev.T to dWy
   call GEMM('N', 'T', 4*m, m, b*p, one, dS(:,b+1:), ldds, Y(:,1:b*p), ldy, one, dW(:,n+2:), 4*m)
   !dX = Wx.T * dS
-  call GEMM('T', 'N', n, b*p, 4*m, one, W(:,2:), 4*m, dS(:,b+1:), ldds, zero, dX, lddx)
+  call GEMM('T', 'N', n, b*p, 4*m, one, W(:,2:), 4*m, dS(:,b+1:), ldds, one, dX, lddx)
                      
 end subroutine NAME(lstmbw)
+
+subroutine NAME(lstmrbw)(tau, m, n, b, p, X, ldx, W, Y, ldy, S, lds, dY, lddy &
+     , dX, lddx, dW, dS, ldds) BIND(C) 
+
+  use iso_c_binding
+  implicit none
+
+  INT_T, intent(in), value :: m, n, b, p, ldx, ldy, lds, lddy, lddx, ldds
+  FLOAT_T, intent(in), value :: tau
+  FLOAT_T, intent(in) :: X(ldx,b*p), W(4*m,m+n+1), Y(ldy,b*p+b) &
+                       , S(lds,b*p+b), dY(lddy,b*p)
+  FLOAT_T, intent(inout) :: dW(4*m,m+n+1), dS(ldds,b*p+b)
+  FLOAT_T, intent(out) :: dX(lddx,b*p)
+  FLOAT_T, parameter :: one = 1, zero = 0
+  INT_T :: i,offset
+
+  do i=0,p-1
+     offset = i*b
+     call NAME(lstm_activations_grad)(tau, m, b, dY(:,offset+1:), lddy, S(:,offset+b+1:) &
+          , S(:,offset+1), lds, dS(:,offset+b+1:), dS(:,offset+1:), ldds, dW(:,1))
+     !dH = Wy.T * dS, need to access dH as dS(5*m+1,1) to pass reference to dS without copying
+     call GEMM('T', 'N', m, b, 4*m, one, W(:,n+2:), 4*m, dS(:,offset+1:), ldds &
+          , zero, dS(5*m+1,offset+b+1), ldds)   
+  end do
+  !add dS*X.T to dWx
+  call GEMM('N', 'T', 4*m, n, b*p, one, dS(:,1:b*p), ldds, X, ldx, one, dW(:,2:), 4*m)
+  !add dS*Yprev.T to dWy
+  call GEMM('N', 'T', 4*m, m, b*p, one, dS(:,1:b*p), ldds, Y(:,b+1:), ldy, one, dW(:,n+2:), 4*m)
+  !dX = Wx.T * dS
+  call GEMM('T', 'N', n, b*p, 4*m, one, W(:,2:), 4*m, dS(:,1:b*p), ldds, one, dX, lddx)
+                     
+end subroutine NAME(lstmrbw)
+
+!subroutine NAME(bilstmbw)(tau, m, n, b, p, X, ldx, W, Y, ldy, S, lds, dY, lddy &
+!     , dX, lddx, dW, dS, ldds) BIND(C) 
+
+!  use iso_c_binding
+!  implicit none
+
+!  INT_T, intent(in), value :: m, n, b, p, ldx, ldy, lds, lddy, lddx, ldds
+!  FLOAT_T, intent(in), value :: tau
+!  FLOAT_T, intent(in) :: X(ldx,b*p), W(4*m,2*(m+n+1)), Y(ldy,b*p+2*b) &
+!                       , S(lds,b*p+2*b), dY(lddy,b*p)
+!  FLOAT_T, intent(inout) :: dW(4*m,2*(m+n+1)), dS(ldds,b*p+2*b)
+!  FLOAT_T, intent(out) :: dX(lddx,b*p)
+!  FLOAT_T, parameter :: one = 1, zero = 0
+!  INT_T :: i,offset
+
+!  write(*,*) "Starting bilstmbw"
+!  write(*,*) "Computing forward direction"
+  !gradient of the forward direction
+!  do i=p-1,0,-1
+!     offset = i*b
+!     call NAME(lstm_activations_grad)(tau, m, b, dY(:m,offset+1:), lddy, S(:6*m,offset+1:) &
+!          , S(:6*m,offset+b+1:), lds, dS(:6*m,offset+b+1:), dS(:6*m,offset+2*b+1:), ldds, dW(:,1))
+     !dH = Wy.T * dS, need to access dH as dS(5*m+1,1) to pass reference to dS without copying
+!     call GEMM('T', 'N', m, b, 4*m, one, W(:,n+2:), 4*m, dS(:6*m,offset+2*b+1:), ldds &
+!          , zero, dS(5*m+1,offset+b+1), ldds)   
+!  end do
+  !add dS*X.T to dWx
+!  call GEMM('N', 'T', 4*m, n, b*p, one, dS(:6*m,2*b+1:), ldds, X, ldx, one, dW(:,2:), 4*m)
+  !add dS*Yprev.T to dWy
+!  call GEMM('N', 'T', 4*m, m, b*p, one, dS(:6*m,2*b+1:), ldds, Y(:m,1:b*p), ldy &
+!       , one, dW(:,n+2:), 4*m)
+  !dX = Wx.T * dS
+!  call GEMM('T', 'N', n, b*p, 4*m, one, W(:,2:), 4*m, dS(:6*m,2*b+1:), ldds, zero, dX, lddx)
+
+!  write(*,*) "Computing reverse direction"
+  !gradient of the reverse direction
+!  do i=0,p-1
+!     offset = i*b
+!     call NAME(lstm_activations_grad)(tau, m, b, dY(m+1:,offset+1:), lddy &
+!          , S(6*m+1:,offset+2*b+1:), S(6*m+1:,offset+b+1:), lds &
+!          , dS(6*m+1:,offset+b+1:), dS(6*m+1:,offset+1:), ldds, dW(:,m+n+2))
+!     call GEMM('T', 'N', m, b, 4*m, one, W(:,m+2*n+3:), 4*m, dS(6*m+1:,offset+b+1:), ldds &
+!          , zero, dS(11*m+1,offset+1), ldds)
+!  end do
+  !add dS*X.T to dWx
+!  call GEMM('N', 'T', 4*m, n, b*p, one, dS(6*m+1:,:b*p), ldds, X, ldx, one, dW(:,m+n+3:), 4*m)
+  !add dS*Yprev.T to dWy
+!  call GEMM('N', 'T', 4*m, m, b*p, one, dS(6*m+1:,:b*p), ldds, Y(m+1:,2*b+1:b*p+2*b), ldy &
+!       , one, dW(:,m+2*n+3:), 4*m)
+  !dX = Wx.T * dS
+!  call GEMM('T', 'N', n, b*p, 4*m, one, W(:,m+n+3:), 4*m, dS(6*m+1:,:b*p), ldds, one, dX, lddx)
+                     
+!end subroutine NAME(bilstmbw)
 
 subroutine NAME(lstmencbw)(tau, m, n, b, p, X, ldx, W, Y, ldy, S, lds, dY, lddy &
      , dX, lddx, dW, dS, ldds) BIND(C) 
@@ -204,7 +374,7 @@ subroutine NAME(lstmencbw)(tau, m, n, b, p, X, ldx, W, Y, ldy, S, lds, dY, lddy 
   FLOAT_T, intent(in), value :: tau
   FLOAT_T, intent(in) :: X(ldx,b*p), W(4*m,m+n+1), Y(ldy,b*p+b) &
                        , S(lds,b*p+b), dY(lddy,b)
-  FLOAT_T, intent(inout) :: dW(4*m,m+n+1), dS(ldds,b*p+p)
+  FLOAT_T, intent(inout) :: dW(4*m,m+n+1), dS(ldds,b*p+b)
   FLOAT_T, intent(out) :: dX(lddx,b*p)
   FLOAT_T, parameter :: one = 1, zero = 0
   FLOAT_T :: dYzero(m, b)
@@ -212,7 +382,7 @@ subroutine NAME(lstmencbw)(tau, m, n, b, p, X, ldx, W, Y, ldy, S, lds, dY, lddy 
 
   dYzero = 0
   !first step uses dY
-  call NAME(lstm_activations_grad)(tau, m, b, dY, lddy, S(:,(p-1)*b+1:), lds &
+  call NAME(lstm_activations_grad)(tau, m, b, dY, lddy, S(:,(p-1)*b+1:), S(:,p*b+1:), lds &
        , dS(:,(p-1)*b+1:), dS(:,p*b+1:), ldds, dW(:,1))
   !dH = Wy.T * dS, need to access dH as dS(5*m+1,1) to pass reference to dS without copying
   call GEMM('T', 'N', m, b, 4*m, one, W(:,n+2:), 4*m, dS(:,p*b+1:), ldds &
@@ -220,8 +390,8 @@ subroutine NAME(lstmencbw)(tau, m, n, b, p, X, ldx, W, Y, ldy, S, lds, dY, lddy 
   
   do i=p-2,0,-1
      offset = i*b
-     call NAME(lstm_activations_grad)(tau, m, b, dYzero, lddy, S(:,offset+1:), lds &
-          , dS(:,offset+1:), dS(:,offset+b+1:), ldds, dW(:,1))
+     call NAME(lstm_activations_grad)(tau, m, b, dYzero, lddy, S(:,offset+1:) &
+          , S(:,offset+b+1), lds, dS(:,offset+1:), dS(:,offset+b+1:), ldds, dW(:,1))
      !dH = Wy.T * dS, need to access dH as dS(5*m+1,1) to pass reference to dS without copying
      call GEMM('T', 'N', m, b, 4*m, one, W(:,n+2:), 4*m, dS(:,offset+b+1:), ldds &
           , zero, dS(5*m+1,offset+1), ldds)   
