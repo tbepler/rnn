@@ -14,10 +14,6 @@ class BiLSTM(object):
         self.forget_bias = forget_bias
         self.tau = tau
         self.initializer = initializer
-        self._Y = None
-        self.S = None
-        self.dX = None
-        self.dS = None
 
     def __getstate__(self):
         x = {}
@@ -45,10 +41,6 @@ class BiLSTM(object):
              self.forget_bias = x.get('forget_bias', 3)
              self.tau = x.get('tau', float('inf'))
              self.initializer = x.get('init', init.xavier) 
-        self._Y = None
-        self.S = None
-        self.dX = None
-        self.dS = None
 
     def weights(self, dtype=np.float64):
         #print dir(self)
@@ -66,83 +58,64 @@ class BiLSTM(object):
     def size(self): return 2*(self.inputs+self._outputs+1)*4*self._outputs
 
     @property
-    def Y(self):
-        return self._Y[1:-1]
-
-    @property
     def outputs(self): return 2*self._outputs
-        
-    def advance(self):
-        #bidirectional LSTM is not really foldable...
-        if self._Y is not None:
-            self._Y[0,:,:] = self._Y[-2,:,:]
-            self._Y[-1] = 0
-        if self.S is not None:
-            self.S[0,:,:] = self.S[-2,:,:]
-            self.S[-1] = 0
 
-    def reset(self):
-        if self._Y is not None:
-            self._Y[:] = 0
-        if self.S is not None:
-            self.S[:] = 0    
-            
-    def resize_fwd(self, k, b, dtype):
-        if self._Y is None:
-            self._Y = np.zeros((k+2,b,2*self._outputs), dtype=dtype)
-        else:
-            self._Y.resize((k+2,b,2*self._outputs),refcheck=False)
-        if self._Y.dtype != dtype:
-            self._Y = self._Y.astype(dtype, copy=False)    
-        if self.S is None:
-            self.S = np.zeros((k+2,b,12*self._outputs), dtype=dtype)
-        else:
-            self.S.resize((k+2,b,12*self._outputs))
-        if self.S.dtype != dtype:
-            self.S = self.S.astype(dtype, copy=False)    
-
-    def resize_bwd(self, k, b, dtype):
-        if self.dX is None:
-            self.dX = np.zeros((k,b,self.inputs), dtype=dtype)
-        else:
-            self.dX.resize((k,b,self.inputs))
-            self.dX[:] = 0
-        if self.dX.dtype != dtype:
-            self.dX = self.dX.astype(dtype, copy=False)
-        if self.dS is None:
-            self.dS = np.zeros((k+2,b,12*self._outputs), dtype=dtype)
-        else:
-            self.dS.resize((k+2,b,12*self._outputs))
-            self.dS[:] = 0
-        if self.dS.dtype != dtype:
-            self.dS = self.dS.astype(dtype, copy=False)    
-            
-    def forward(self, W, X, train=None):
+    def alloc_states(self, X):
         (k,b,_) = X.shape
-        #self.advance()
-        self.resize_fwd(k, b, W.dtype)
-        #algo.bilstmfw(W, X, self.S, self._Y)
-        algo.lstmfw(W[0:self._outputs+self.inputs+1], X, self.S[0:-1,:,0:6*self._outputs]
-                    , self._Y[0:-1,:,0:self._outputs])
-        algo.lstmrfw(W[self._outputs+self.inputs+1:], X, self.S[1:,:,6*self._outputs:]
-                     , self._Y[1:,:,self._outputs:])
-        self.X = X
-        return self._Y[1:-1]
+        return np.zeros((k+1,b,6*self._outputs), dtype=X.dtype)
 
-    def backward(self, W, dY, dW):
-        (k,b,_) = dY.shape
-        self.resize_bwd(k, b, W.dtype)
-        #dW[:] = 0
-        #algo.bilstmbw(self.tau, W, self.X, self.S, self._Y, dY, dW, self.dX, self.dS)
-        algo.lstmbw(self.tau, W[0:self._outputs+self.inputs+1], self.X
-                    , self.S[0:-1,:,0:6*self._outputs], self._Y[0:-1,:,0:self._outputs]
-                    , dY[:,:,0:self._outputs], dW[0:self._outputs+self.inputs+1]
-                    , self.dX, self.dS[0:-1,:,0:6*self._outputs])
-        algo.lstmrbw(self.tau, W[self._outputs+self.inputs+1:], self.X
-                     , self.S[1:,:,6*self._outputs:], self._Y[1:,:,self._outputs:]
-                     , dY[:,:,self._outputs:], dW[self._outputs+self.inputs+1:]
-                     , self.dX, self.dS[1:,:,6*self._outputs:])
-        return self.dX
+    def alloc_outputs(self, X):
+        (k,b,_) = X.shape
+        return np.zeros((k+2,b,2*self._outputs), dtype=X.dtype)
+
+    def grad(self, W, X, Y, Sl, Sr, dW, dY):
+        dY = list(dY)
+        dX = [np.zeros_like(x) for x in X]
+        dS = None
+        #gradient of left fold
+        Wl = W[0:self._outputs+self.inputs+1]
+        dWl = dW[0:self._outputs+self.inputs+1]
+        for i in reversed(xrange(len(X))):
+            if dS is None:
+                dS = np.zeros_like(Sl[i])
+            algo.lstmbw(self.tau, Wl, X[i], Sl[i], Y[i][0:-1,:,:self._outputs]
+                        , dY[i][:,:,:self._outputs], dWl, dX[i], dS)
+            dS[-1] = dS[0]
+        #gradient of right fold
+        Wr = W[self._outputs+self.inputs+1:]
+        dWr = dW[self._outputs+self.inputs+1:]
+        if dS is not None: dS[:] = 0
+        for i in xrange(len(X)):
+            algo.lstmrbw(self.tau, Wr, X[i], Sr[i], Y[i][1:,:,self._outputs:]
+                         , dY[i][:,:,self._outputs:], dWr, dX[i], dS)
+            dS[0] = dS[-1]
+        return dX
+    
+    def __call__(self, W, X, gradient=False):
+        X = list(X) #store chunks in list
+        Sl = [self.alloc_states(x) for x in X]
+        Sr = [self.alloc_states(x) for x in X]
+        Y = [self.alloc_outputs(x) for x in X]
+        #compute left fold
+        Wl = W[0:self._outputs+self.inputs+1]
+        for i in xrange(len(X)):
+            if i > 0:
+                Sl[i][0] = Sl[i-1][-1]
+                Y[i][0,:,:self._outputs] = Y[i-1][-2,:,:self._outputs]
+            algo.lstmfw(Wl, X[i], Sl[i], Y[i][0:-1,:,:self._outputs])
+        #compute right fold
+        Wr = W[self._outputs+self.inputs+1:]
+        for i in reversed(xrange(len(X))):
+            if i < len(X)-1:
+                Sr[i][-1] = Sr[i+1][0]
+                Y[i][-1,:,self._outputs:] = Y[i+1][1,:,self._outputs:]
+            algo.lstmrfw(Wr, X[i], Sr[i], Y[i][1:,:,self._outputs:])
+
+        iter_y = (y[1:-1] for y in Y)
+        if gradient:
+            g = lambda dw, dy: self.grad(W, X, Y, Sl, Sr, dw, dy)
+            return iter_y, g
+        return iter_y
 
 if __name__ == '__main__':
     import test

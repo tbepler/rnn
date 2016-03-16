@@ -23,20 +23,11 @@ class LSTM(object):
         return W
         
     @property
-    def wshape(self): return (self.inputs+self.outputs+1, 4*self.outputs)
+    def shape(self): return (self.inputs+self.outputs+1, 4*self.outputs)
 
     @property
-    def wsize(self): return (self.inputs+self.outputs+1)*4*self.outputs
-
-    def states(self, dtype=np.float64):
-        return np.zeros(6*self.outputs, dtype=dtype)
-
-    @property
-    def sshape(self): return 6*self.outputs
-
-    @property
-    def ssize(self): return 6*self.outputs
-            
+    def size(self): return (self.inputs+self.outputs+1)*4*self.outputs
+                         
     def forward(self, X, Y, W, S, train=None):
         (k,b,_) = X.shape
         #self.advance()
@@ -44,6 +35,53 @@ class LSTM(object):
         algo.lstmfw(W, X, self.S, self._Y)
         self.X = X
         return self._Y[1:,:,:]
+
+    def alloc_states(self, X):
+        (k,b,_) = X.shape
+        return np.zeros((k+1,b,6*self.outputs), dtype=X.dtype)
+
+    def alloc_outputs(self, X):
+        (k,b,_) = X.shape
+        return np.zeros((k+1,b,self.outputs), dtype=X.dtype)
+
+    def fw_iter(self, W, X):
+        S = None
+        Yprev = None
+        for x in X:
+            if S is None:
+                S = self.alloc_states(x)
+            Y = self.alloc_outputs(x)
+            if Yprev is not None:
+                Y[0] = Yprev[-1]
+            algo.lstmfw(W, x, S, Y)
+            yield Y[1:]
+            S[0] = S[-1]
+            Yprev = Y
+    
+    def __call__(self, W, X, gradient=False):
+        if gradient:
+            X = list(X)
+            S = [self.alloc_states(x) for x in X]
+            Y = [self.alloc_outputs(x) for x in X]
+            for i in xrange(len(X)):
+                if i > 0:
+                    S[i][0] = S[i-1][-1]
+                    Y[i][0] = Y[i-1][-1]
+                algo.lstmfw(W, X[i], S[i], Y[i])
+            g = lambda dw, dy: self.grad(W, X, Y, S, dw, dy)
+            return (y[1:] for y in Y), g
+        return self.fw_iter(W, X)
+
+    def grad(self, W, X, Y, S, dW, dY):
+        dY = list(dY)
+        dX = [np.zeros_like(x) for x in X]
+        dS = None
+        for i in reversed(xrange(len(X))):
+            if dS is None:
+                dS = np.zeros_like(S[i])
+            algo.lstmbw(self.tau, W, X[i], S[i], Y[i], dY[i], dW, dX[i], dS)
+            dS[-1] = dS[0]
+        return dX
 
     def backward(self, W, dY, dW):
         (k,b,_) = dY.shape
