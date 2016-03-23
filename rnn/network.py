@@ -18,27 +18,44 @@ class Network(object):
         self.W = f.weights(dtype=dtype)
         self.solver = solver
 
-    def train(train_data, validate_data=None, validate_every=1, save=null_func, *args, **kwargs):
+    def fit(self, train_data, validate_data=None, validate_every=1, save=null_func
+            , *args, **kwargs):
         for info in self.solver(self.f.error_grad, self.W, train_data):
             if close_to_zero(info.iters % validate_every):
                 if validate_data is not None:
                     info.err, info.extras = self.validate(validate_data, **kwargs)
                 save(self, info)
 
-    def validate(data, batch_size=0):
+    def validate(self, data, **kwargs):
         err = 0
-        n = 0
         extras = {}
-        for (X,Y) in data.batches(batch_size):
-            for (batch_err, batch_n, batch_extras) in self.f.error(X, Y):
-                err += batch_err
+        n = 0
+        for X,Y in data:
+            for batch_err,batch_extras,batch_n in self.f.error(self.W, X, Y, **kwargs):
                 n += batch_n
+                err += batch_err
                 for k,v in batch_extras.iteritems():
                     extras[k] = extras.get(k, 0) + v
-        err = err/n if n != 0 else 0
+        err = err/n if n != 0 and err != 0 else 0
         for k in extras:
-            extras[k] = extras[k]/n if extras[k] != 0 else 0
+            extras[k] = extras[k]/n if n != 0 and extras[k] != 0 else 0
         return err, extras
+
+    def predict(self, data, **kwargs):
+        for X in data:
+            yield self.f(self.W, X, **kwargs)
+
+    def __call__(self, data, **kwargs):
+        return self.predict(data, **kwargs)
+
+    def __getattr__(self, attr):
+        call = self.f.__getattribute__(attr)
+        if callable(call):
+            def wrapped(data, *args, **kwargs):
+                for X in data:
+                    yield call(self.W, X, *args, **kwargs)
+            return wrapped
+        return call
                 
     @property
     def dtype(self): return self.W.dtype
@@ -47,7 +64,6 @@ class Network(object):
     def dtype(self, t):
         if self.W.dtype != t:
             self.W = self.W.astype(t, copy=False)
-            self.dW = self.dW.astype(t, copy=False)
 
     def save(self, f):
         pickle.dump(self, f)
