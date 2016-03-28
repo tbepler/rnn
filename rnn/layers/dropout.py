@@ -1,7 +1,7 @@
 import numpy as np
 import random
 
-import algorithms as algo
+import rnn.kernel as algo
 
 class Dropout(object):
 

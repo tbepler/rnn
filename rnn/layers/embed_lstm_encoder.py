@@ -2,8 +2,8 @@ import ctypes
 import numpy as np
 import math
 
-import algorithms as algo
-import initializers as init
+import rnn.kernel as algo
+import rnn.initializers as init
 
 class EmLSTMEncoder(object):
 
