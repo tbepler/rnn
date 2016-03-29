@@ -23,9 +23,14 @@ def split(w):
     return w[0], w[1:n+1], w[n+1:]
 
 def gates(bias, wx, x):
-    k,b,n = x.shape
-    x = x.reshape((k*b,n))
-    ifog = th.dot(x, wx) + bias
+    if 'int' in x.dtype:
+        k,b = x.shape
+        x = x.flatten()
+        ifog = wx[x] + bias
+    else:
+        k,b,n = x.shape
+        x = x.reshape((k*b,n))
+        ifog = th.dot(x, wx) + bias
     ifog = ifog.reshape((k,b,ifog.shape[1]))
     return ifog
 

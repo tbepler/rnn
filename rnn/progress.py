@@ -8,7 +8,7 @@ def progress_bar(out=sys.stdout, delta=2.0, bar_len=40):
     while True:
         header,progress,extras = yield
         tcur = time.time()
-        if progress == 1: #this signals done
+        if progress == 1 or progress == 0: #this signals done
             out.write(clear_code)
             print >>out, header,
             write_extras(extras, out)
