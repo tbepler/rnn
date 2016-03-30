@@ -18,27 +18,27 @@ class SGD(object):
         self.mom = mom
         self.decay = decay
 
-    def compile(self, ws, x, y, err, *args):
-        gws = th.grad(err, ws)
-        vs = [theano.shared(w.get_value()*0, broadcastable=w.broadcastable) for w in ws]
+    def compile(self, weights, inputs, err, extras):
+        gws = th.grad(err, weights)
+        vs = [theano.shared(w.get_value()*0, broadcastable=w.broadcastable) for w in weights]
         lr = th.scalar()
         #mom = th.constant(self.mom)
         updates = []
-        for w, gw, v in zip(ws, gws, vs):
+        for w, gw, v in zip(weights, gws, vs):
             vnext = self.mom*v + (1-self.mom)*gw
             #vnext = v + gw
             updates.append((v, vnext))
             updates.append((w, w-lr*vnext))
-        return theano.function([x,y,lr], [err]+list(args), updates=updates)
+        return theano.function([lr]+inputs, [err]+extras, updates=updates)
         
-    def __call__(self, data, ws, x, y, err, *args):
-        f = self.compile(ws, x, y, err, *args)
+    def __call__(self, data, weights, inputs, err, extras, max_iters=-1):
+        f = self.compile(weights, inputs, err, extras)
         n = len(data)
         i = 0
-        while True:
+        while i < max_iters or max_iters < 0:
             j = 0.0
-            for x,y in data:
-                ret = f(x, y, self.lr)
+            for args in data:
+                ret = f(self.lr, *args)
                 j += 1
                 yield i+j/n, ret
             i += 1
@@ -52,10 +52,10 @@ class RMSprop(object):
         self.mom = mom
         self.decay = decay
 
-    def compile(self, ws, x, y, err, *args):
-        gws = th.grad(err, ws)
-        ms = [theano.shared(w.get_value()*0, broadcastable=w.broadcastable) for w in ws]
-        vs = [theano.shared(w.get_value()*0, broadcastable=w.broadcastable) for w in ws]
+    def compile(self, weights, inputs, err, extras):
+        gws = th.grad(err, weightss)
+        ms = [theano.shared(w.get_value()*0, broadcastable=w.broadcastable) for w in weights]
+        vs = [theano.shared(w.get_value()*0, broadcastable=w.broadcastable) for w in weights]
         lr = th.scalar()
         rho = self.rho
         eps = self.eps
@@ -65,17 +65,19 @@ class RMSprop(object):
             mnext = rho*m + (1-rho)*gw*gw
             vnext = mom*v + (1-mom)*gw/(th.sqrt(mnext)+eps)
             updates.extend([(m,mnext), (v,vnext), (w, w-lr*vnext)])
-        return theano.function([x,y,lr], [err]+list(args), updates=updates)
+        return theano.function([lr]+inputs, [err]+extras, updates=updates)
 
-    def __call__(self, data, ws, x, y, err, *args):
-        f = self.compile(ws, x, y, err, *args)
+    def __call__(self, data, weights, inputs, err, extras, max_iters=-1):
+        f = self.compile(weights, inputs, err, extras)
         n = len(data)
         i = 0
-        while True:
+        while i < max_iters or max_iters < 0:
             j = 0.0
-            for x,y in data:
-                ret = f(x, y, self.lr)
+            for args in data:
+                ret = f(self.lr, *args)
                 j += 1
                 yield i+j/n, ret
             i += 1
             self.lr = self.decay(self.lr)
+
+            
