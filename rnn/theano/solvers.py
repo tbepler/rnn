@@ -53,7 +53,7 @@ class RMSprop(object):
         self.decay = decay
 
     def compile(self, weights, inputs, err, extras):
-        gws = th.grad(err, weightss)
+        gws = th.grad(err, weights)
         ms = [theano.shared(w.get_value()*0, broadcastable=w.broadcastable) for w in weights]
         vs = [theano.shared(w.get_value()*0, broadcastable=w.broadcastable) for w in weights]
         lr = th.scalar()
@@ -61,7 +61,7 @@ class RMSprop(object):
         eps = self.eps
         mom = self.mom
         updates = []
-        for w, gw, m, v in zip(ws, gws, ms, vs):
+        for w, gw, m, v in zip(weights, gws, ms, vs):
             mnext = rho*m + (1-rho)*gw*gw
             vnext = mom*v + (1-mom)*gw/(th.sqrt(mnext)+eps)
             updates.extend([(m,mnext), (v,vnext), (w, w-lr*vnext)])
