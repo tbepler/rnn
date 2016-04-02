@@ -92,18 +92,40 @@ class CharRNN(object):
                 mask[k:,j] = 0
             yield float(i+n)/len(data), X, mask
 
+def as_matrix(data):
+    n = len(data)
+    m = max(len(x) for x in data)
+    dtype = data[0].dtype
+    X = np.zeros((m,n), dtype=dtype)
+    mask = np.ones((m,n), dtype=np.int32)
+    for i in xrange(n):
+        x = data[i]
+        k = len(x)
+        X[:k,i] = x
+        mask[k:,i] = 0
+    return X, mask
+
 class BatchIter(object):
     def __init__(self, data, size, shuffle=True):
-        self.data = data
+        #self.data = data
+        self.X, self.mask = as_matrix(data)
         self.size = size
         self.shuffle = shuffle
 
     def __len__(self):
-        return int(math.ceil(len(self.data)/float(self.size)))
+        return int(math.ceil(self.X.shape[1])/float(self.size))
+        #return int(math.ceil(len(self.data)/float(self.size)))
 
     def __iter__(self):
         if self.shuffle:
-            random.shuffle(self.data)
+            p = np.random.permutation(self.X.shape[1])
+            self.X = self.X[:,p]
+            self.mask = self.mask[:,p]
+            #random.shuffle(self.data)
+        size = self.size
+        for i in xrange(0, self.X.shape[1], size):
+            yield self.X[:,i:i+size], self.mask[:,i:i+size]
+        '''
         data = self.data
         size = self.size
         for i in xrange(0, len(data), size):
@@ -118,4 +140,4 @@ class BatchIter(object):
                 X[:k,j] = x
                 mask[k:,j] = 0
             yield X, mask
-    
+       ''' 
