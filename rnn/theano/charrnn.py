@@ -39,16 +39,16 @@ class CharRNN(object):
         self.weights.append(decode.weights)
         yh = decode(y_layer)
         self.yh = softmax.softmax(yh)
-        self.loss = T.sum(crossent.crossent(self.yh, self.y)*self.mask[1:])
+        self.loss_t = T.sum(crossent.crossent(self.yh, self.y)*self.mask[1:])
         self.correct = T.sum(T.eq(T.argmax(self.yh, axis=2), self.y)*self.mask[1:])
         self.count = T.sum(self.mask[1:])
         self.solver = solver
         #compile theano functions
-        self._loss = theano.function([self.data, self.mask], [self.loss, self.correct, self.count])
+        self._loss = theano.function([self.data, self.mask], [self.loss_t, self.correct, self.count])
 
     def fit(self, data_train, validate=None, batch_size=256, max_iters=100, callback=null_func):
         steps = self.solver(BatchIter(data_train, batch_size), self.weights, [self.data, self.mask]
-                            , self.loss, [self.correct, self.count], max_iters)
+                            , self.loss_t, [self.correct, self.count], max_iters)
         train_loss, train_correct, train_n = 0, 0, 0
         callback(0, 'fit')
         for it, (l,c,n) in steps:
@@ -57,7 +57,7 @@ class CharRNN(object):
             train_n += n
             if it % 1 == 0:
                 if validate is not None:
-                    res = self.loss(validate, batch_size=batch_size, callback=callaback)
+                    res = self.loss(validate, batch_size=batch_size, callback=callback)
                     res['TrainLoss'] = train_loss/train_n
                     res['TrainAccuracy'] = float(train_correct)/train_n
                 else:
