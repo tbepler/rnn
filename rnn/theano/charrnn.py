@@ -48,7 +48,7 @@ class CharRNN(object):
 
     def fit(self, data_train, validate=None, batch_size=256, max_iters=100, callback=null_func):
         steps = self.solver(BatchIter(data_train, batch_size), self.weights, [self.data, self.mask]
-                            , self.loss_t, [self.correct, self.count], max_iters)
+                            , self.loss_t, [self.correct, self.count], max_iters=max_iters)
         train_loss, train_correct, train_n = 0, 0, 0
         callback(0, 'fit')
         for it, (l,c,n) in steps:
