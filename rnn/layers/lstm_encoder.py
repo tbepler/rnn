@@ -2,10 +2,10 @@ import ctypes
 import numpy as np
 import math
 
-import algorithms as algo
-import initializers as init
+import rnn.kernel as algo
+import rnn.initializers as init
 
-class LSTM(object):
+class LSTMEncoder(object):
 
     def __init__(self, input_size, output_size, forget_bias=3, tau=float('inf')
                  , initializer = init.xavier):
@@ -51,7 +51,6 @@ class LSTM(object):
         self.dS = None
 
     def weights(self, dtype=np.float64):
-        #print dir(self)
         W = np.zeros((self.inputs+self.outputs+1, 4*self.outputs), dtype=dtype)
         self.initializer(W[1:])
         W[0,self.outputs:2*self.outputs] = self.forget_bias
@@ -65,7 +64,7 @@ class LSTM(object):
 
     @property
     def Y(self):
-        return self._Y[1:]
+        return self._Y[-1:]
         
     def advance(self):
         if self._Y is not None:
@@ -93,7 +92,7 @@ class LSTM(object):
         if self.S.dtype != dtype:
             self.S = self.S.astype(dtype, copy=False)    
 
-    def resize_bwd(self, k, b, dtype):
+    def resize_bwd(self, k, b, dtype): 
         if self.dX is None:
             self.dX = np.zeros((k,b,self.inputs), dtype=dtype)
         else:
@@ -115,19 +114,20 @@ class LSTM(object):
         self.resize_fwd(k, b, W.dtype)
         algo.lstmfw(W, X, self.S, self._Y)
         self.X = X
-        return self._Y[1:,:,:]
+        return self._Y[-1:]
 
     def backward(self, W, dY, dW):
-        (k,b,_) = dY.shape
+        (_,b,_) = dY.shape
+        k = self._Y.shape[0]-1
         self.resize_bwd(k, b, W.dtype)
         #dW[:] = 0
-        algo.lstmbw(self.tau, W, self.X, self.S, self._Y, dY, dW, self.dX, self.dS)
+        algo.lstmencbw(self.tau, W, self.X, self.S, self._Y, dY, dW, self.dX, self.dS)
         return self.dX
 
 if __name__ == '__main__':
     import test
     ins = 2
     outs = 2
-    layer = LSTM(ins,outs)
+    layer = LSTMEncoder(ins,outs)
     test.layer(layer, float_t=np.float64)
     test.layer(layer, float_t=np.float32)

@@ -44,27 +44,24 @@ def layer(layer, ins=None, outs=None, b=5, n=10, init_x=np.random.randn, type_x=
     print "Testing with float_t:", float_t
     print "Testing with type_x:", type_x
     
-    print "Running forward..."    
-    yh = layer.forward(w, x).copy()
-    print yh
+    print "Running forward..."
+    yiter, g = layer(w, [x], gradient=True)
+    yh = next(yiter)
+    #print yh
     
     error_f = err_f.init(yh.shape, dtype=float_t)
     dy = error_f.grad(yh)
     
     print "Running backward..."
-    dx = layer.backward(w, dy, dw)
-    if dx is not None:
-        dx = dx.copy()
+    dx = next((a for a in g(dw, [dy])), None)
 
     def err_x(x):
-        layer.reset()
-        yh = layer.forward(w, x)
-        return error_f(yh)
+        yh_ = next(layer(w, [x]))
+        return error_f(yh_)
 
     def err_w(w):
-        layer.reset()
-        yh = layer.forward(w, x)
-        return error_f(yh)
+        yh_ = next(layer(w, [x]))
+        return error_f(yh_)
 
     if not dx is None:
         num_dx = num_grad(err_x, x)
@@ -77,7 +74,6 @@ def layer(layer, ins=None, outs=None, b=5, n=10, init_x=np.random.randn, type_x=
         print dw
         print num_dw
         print "dW allclose:", np.allclose(dw, num_dw)
-    layer.reset()
 
     print "Testing batching:"
     if len(x.shape) == 2:
@@ -90,22 +86,17 @@ def layer(layer, ins=None, outs=None, b=5, n=10, init_x=np.random.randn, type_x=
             x_batch[:] = x[:,i:i+1]
         else:
             x_batch[:] = x[:,i:i+1,:]
-        yh_per_batch[:,i:i+1,:] = layer.forward(w, x_batch)
-        #yh_per_batch[:,i:i+1,:] = layer.forward(x[:,i:i+1])
-        layer.reset()
+        yh_per_batch[:,i:i+1,:] = next(layer(w, [x_batch]))
     #print yh
     #print yh_per_batch
     print "Batching allclose:", np.allclose(yh, yh_per_batch)
 
     print "Testing steps:"
+    xiter = (x[i:i+1] for i in xrange(n))
+    yhiter = layer(w, xiter)
     yh_per_step = np.zeros_like(yh)
-    if yh.shape[0] == 1:
-        for i in xrange(n):
-            yh_per_step[:] = layer.forward(w, x[i:i+1])
-            layer.advance()
-    else:
-        for i in xrange(n):
-            yh_per_step[i:i+1] = layer.forward(w, x[i:i+1])
-            layer.advance()
-    layer.reset()
+    i = 0
+    for yhi in yhiter:
+        yh_per_step[i:i+1] = yhi
+        i += 1
     print "Steps allclose:", np.allclose(yh, yh_per_step)

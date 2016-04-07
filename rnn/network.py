@@ -1,30 +1,69 @@
 import cPickle as pickle
 import numpy as np
+import math
 
 import compose
 import solvers
 
+def close_to_zero(x, tol=1e-6):
+    return math.abs(x) <= tol
+
+def null_func(*args, **kwargs):
+    pass
+
 class Network(object):
 
-    def __init__(self, f, trunc_bptt=0, solver=solvers.NullSolver, dtype=np.float64):
+    def __init__(self, f, solver=solvers.NullSolver, dtype=np.float64):
         self.f = f
-        self.trunc_bptt = trunc_bptt
         self.W = f.weights(dtype=dtype)
-        self.dW = np.zeros(0, dtype=dtype)
         self.solver = solver
-        self._dtype = dtype
-        self.solver.dtype = dtype
 
+    def fit(self, train_data, validate_data=None, validate_every=1, save=null_func
+            , *args, **kwargs):
+        for info in self.solver(self.f.error_grad, self.W, train_data):
+            if close_to_zero(info.iters % validate_every):
+                if validate_data is not None:
+                    info.err, info.extras = self.validate(validate_data, **kwargs)
+                save(self, info)
+
+    def validate(self, data, **kwargs):
+        err = 0
+        extras = {}
+        n = 0
+        for X,Y in data:
+            for batch_err,batch_extras,batch_n in self.f.error(self.W, X, Y, **kwargs):
+                n += batch_n
+                err += batch_err
+                for k,v in batch_extras.iteritems():
+                    extras[k] = extras.get(k, 0) + v
+        err = err/n if n != 0 and err != 0 else 0
+        for k in extras:
+            extras[k] = extras[k]/n if n != 0 and extras[k] != 0 else 0
+        return err, extras
+
+    def predict(self, data, **kwargs):
+        for X in data:
+            yield self.f(self.W, X, **kwargs)
+
+    def __call__(self, data, **kwargs):
+        return self.predict(data, **kwargs)
+
+    def __getattr__(self, attr):
+        call = self.f.__getattribute__(attr)
+        if callable(call):
+            def wrapped(data, *args, **kwargs):
+                for X in data:
+                    yield call(self.W, X, *args, **kwargs)
+            return wrapped
+        return call
+                
     @property
-    def dtype(self): return self._dtype
+    def dtype(self): return self.W.dtype
 
     @dtype.setter
     def dtype(self, t):
-        if self._dtype != t:
-            self._dtype = t
-            self.solver.dtype = self.dtype
+        if self.W.dtype != t:
             self.W = self.W.astype(t, copy=False)
-            self.dW = self.dW.astype(t, copy=False)
 
     def save(self, f):
         pickle.dump(self, f)
@@ -37,23 +76,17 @@ class Network(object):
     def __getstate__(self):
         x = {}
         x['f'] = self.f
-        x['bptt'] = self.trunc_bptt
         x['solver'] = self.solver
-        x['dtype'] = self._dtype
         x['W'] = self.W
         return x
 
     def __setstate__(self, st):
         if type(st) is tuple:
-            self.f, self.solver, self._dtype, self.W = st
-            self.trunc_bptt = 0
+            self.f, self.solver, _, self.W = st
         else:
             self.f = st['f']
-            self.trunc_bptt = st.get('bptt', 0)
             self.solver = st['solver']
-            self._dtype = st['dtype']
             self.W = st['W']
-        self.dW = np.zeros(0, dtype=self.dtype)
 
 class Map(Network):
 

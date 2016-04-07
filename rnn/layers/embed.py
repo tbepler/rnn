@@ -2,7 +2,7 @@ import ctypes
 import numpy as np
 import math
 
-import algorithms as algo
+import rnn.kernel as algo
 
 class Embedding(object):
 

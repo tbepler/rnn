@@ -2,13 +2,13 @@ import ctypes
 import numpy as np
 import math
 
-import algorithms as algo
-import initializers as init
+import rnn.kernel as algo
+import rnn.initializers as init
 
-class LSTMEncoder(object):
+class EmLSTMEncoder(object):
 
-    def __init__(self, input_size, output_size, forget_bias=3, tau=float('inf')
-                 , initializer = init.xavier):
+    def __init__(self, input_size, output_size, forget_bias=3
+                 , tau=float('inf'), initializer=init.xavier):
         self.inputs = input_size
         self.outputs = output_size
         self.forget_bias = forget_bias
@@ -16,7 +16,6 @@ class LSTMEncoder(object):
         self.initializer = initializer
         self._Y = None
         self.S = None
-        self.dX = None
         self.dS = None
 
     def __getstate__(self):
@@ -47,7 +46,6 @@ class LSTMEncoder(object):
              self.initializer = x.get('init', init.xavier) 
         self._Y = None
         self.S = None
-        self.dX = None
         self.dS = None
 
     def weights(self, dtype=np.float64):
@@ -90,16 +88,9 @@ class LSTMEncoder(object):
         else:
             self.S.resize((k+1,b,6*self.outputs))
         if self.S.dtype != dtype:
-            self.S = self.S.astype(dtype, copy=False)    
+            self.S = self.S.astype(dtype, copy=False) 
 
-    def resize_bwd(self, k, b, dtype): 
-        if self.dX is None:
-            self.dX = np.zeros((k,b,self.inputs), dtype=dtype)
-        else:
-            self.dX.resize((k,b,self.inputs))
-            self.dX[:] = 0
-        if self.dX.dtype != dtype:
-            self.dX = self.dX.astype(dtype, copy=False)
+    def resize_bwd(self, k, b, dtype):
         if self.dS is None:
             self.dS = np.zeros((k+1,b,6*self.outputs), dtype=dtype)
         else:
@@ -109,25 +100,34 @@ class LSTMEncoder(object):
             self.dS = self.dS.astype(dtype, copy=False)    
             
     def forward(self, W, X, train=None):
-        (k,b,_) = X.shape
+        (k,b) = X.shape
         #self.advance()
         self.resize_fwd(k, b, W.dtype)
-        algo.lstmfw(W, X, self.S, self._Y)
+        algo.emlstmfw(W, X, self.S, self._Y)
         self.X = X
-        return self._Y[-1:]
+        return self._Y[-1:,:,:]
 
     def backward(self, W, dY, dW):
         (_,b,_) = dY.shape
         k = self._Y.shape[0]-1
         self.resize_bwd(k, b, W.dtype)
+        #self._dY[-1:] = dY
         #dW[:] = 0
-        algo.lstmencbw(self.tau, W, self.X, self.S, self._Y, dY, dW, self.dX, self.dS)
-        return self.dX
+        algo.emlstmencbw(self.tau, W, self.X, self.S, self._Y, dY, dW, self.dS)
+        return None
 
 if __name__ == '__main__':
     import test
     ins = 2
     outs = 2
-    layer = LSTMEncoder(ins,outs)
-    test.layer(layer, float_t=np.float64)
-    test.layer(layer, float_t=np.float32)
+    layer = EmLSTMEncoder(ins,outs)
+
+    init_x = lambda k,b,n: np.random.randint(n, size=(k,b))
+    
+    test.layer(layer, type_x=np.int32, init_x=init_x, float_t=np.float64)
+    test.layer(layer, type_x=np.int64, init_x=init_x, float_t=np.float64)
+
+    test.layer(layer, type_x=np.int32, init_x=init_x, float_t=np.float32)
+    test.layer(layer, type_x=np.int64, init_x=init_x, float_t=np.float32)
+
+

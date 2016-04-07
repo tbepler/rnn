@@ -1,7 +1,7 @@
 import ctypes
 import numpy as np
 
-import algorithms as algo
+import rnn.kernel as algo
 
 class NullSolver(object):
     def step(self, W, dW):
