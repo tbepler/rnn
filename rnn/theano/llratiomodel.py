@@ -20,10 +20,11 @@ class LLRatioModel(object):
         self.labels = []
         for label, model in models:
             yh = theano.clone(model.yh, {model.x: self.x[:-1], model.y: self.x[1:]})
-            logprob = -T.sum(crossent.crossent(yh, self.x[1:])*self.mask[1:])
+            logprob = -T.sum(crossent.crossent(yh, self.x[1:])*self.mask[1:], axis=0)
             self.weights.extend(model.weights)
             self.logprobs.append(logprob)
             self.labels.append(label)
+	self.logprobs = T.stack(self.logprobs, axis=1)
         self.yh = softmax.softmax(self.logprobs)
         self.loss_t = T.sum(crossent.crossent(self.yh, self.y))
         self.correct = T.sum(T.eq(T.argmax(self.yh, axis=1), self.y))
@@ -50,7 +51,7 @@ class LLRatioModel(object):
             xs,ys = zip(*batch)
             n = len(xs)
             m = max(len(x) for x in xs)
-            X = np.zeros((m,n), dtype=x[0].dtype)
+            X = np.zeros((m,n), dtype=xs[0].dtype)
             mask = np.ones((m,n), dtype=np.int32)
             for j in xrange(n):
                 x = xs[j]
