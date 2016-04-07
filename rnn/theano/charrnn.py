@@ -45,6 +45,7 @@ class CharRNN(object):
         self.solver = solver
         #compile theano functions
         self._loss = theano.function([self.data, self.mask], [self.loss_t, self.correct, self.count])
+        self._activations = theano.function([self.data], self.y_layers+[self.yh], givens={self.x:self.data})
 
     def fit(self, data_train, validate=None, batch_size=256, max_iters=100, callback=null_func):
         steps = self.solver(BatchIter(data_train, batch_size), self.weights, [self.data, self.mask]
@@ -77,6 +78,26 @@ class CharRNN(object):
             count_ += n
             callback(p, 'loss')
         return OrderedDict([('Loss', loss_/count_), ('Accuracy', float(correct_)/count_)])
+
+    def activations(self, data, batch_size=256, callback=null_func):
+        callback(0, 'activations')
+        for p,X,lens in self.batch_iter_no_mask(data, batch_size):
+            acts = self._activations(X)
+            for i in xrange(len(lens)):
+                n = lens[i]
+                yield [act[:n,i,:] for act in acts]
+
+    def batch_iter_no_mask(self, data, size):
+        for i in xrange(0, len(data), size):
+            xs = data[i:i+size]
+            n = len(xs)
+            m = max(len(x) for x in xs)
+            X = np.zeros((m,n), dtype=np.int32)
+            for j in xrange(n):
+                x = xs[j]
+                k = len(x)
+                X[:k,j] = x
+            yield float(i+n)/len(data), X, [len(x) for x in xs]
 
     def batch_iter(self, data, size):
         for i in xrange(0, len(data), size):
@@ -113,7 +134,7 @@ class BatchIter(object):
         self.shuffle = shuffle
 
     def __len__(self):
-        return int(math.ceil(self.X.shape[1])/float(self.size))
+        return int(math.ceil(self.X.shape[1]/float(self.size)))
         #return int(math.ceil(len(self.data)/float(self.size)))
 
     def __iter__(self):
