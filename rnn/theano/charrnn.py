@@ -10,6 +10,8 @@ import linear
 import softmax
 import crossent
 
+from rnn.minibatcher import BatchIter
+
 import solvers
 
 def null_func(*args, **kwargs):
@@ -50,6 +52,8 @@ class CharRNN(object):
     def fit(self, data_train, validate=None, batch_size=256, max_iters=100, callback=null_func):
         steps = self.solver(BatchIter(data_train, batch_size), self.weights, [self.data, self.mask]
                             , self.loss_t, [self.correct, self.count], max_iters=max_iters)
+        if validate is not None:
+            validate = BatchIter(validate, batch_size, shuffle=False)
         train_loss, train_correct, train_n = 0, 0, 0
         callback(0, 'fit')
         for it, (l,c,n) in steps:
@@ -58,7 +62,7 @@ class CharRNN(object):
             train_n += n
             if it % 1 == 0:
                 if validate is not None:
-                    res = self.loss(validate, batch_size=batch_size, callback=callback)
+                    res = self.loss_iter(validate, callback=callback)
                     res['TrainLoss'] = train_loss/train_n
                     res['TrainAccuracy'] = float(train_correct)/train_n
                 else:
@@ -68,16 +72,23 @@ class CharRNN(object):
                 yield res
             callback(it%1, 'fit')
             
-    def loss(self, data, batch_size=256, callback=null_func):
+    def loss_iter(self, data, callback=null_func):
         callback(0, 'loss')
         loss_, correct_, count_ = 0, 0, 0
-        for p,X,mask in self.batch_iter(data, batch_size):
+        i = 0
+        for X,mask in data:
+            i += 1
+            p = float(i)/len(data)
             l,c,n = self._loss(X, mask)
             loss_ += l
             correct_ += c
             count_ += n
             callback(p, 'loss')
         return OrderedDict([('Loss', loss_/count_), ('Accuracy', float(correct_)/count_)])
+
+    def loss(self, data, batch_size=256, callback=null_func):
+        iterator = BatchIter(data, batch_size)
+        return self.loss_iter(iterator, callback=callback)
 
     def activations(self, data, batch_size=256, callback=null_func):
         callback(0, 'activations')
@@ -113,52 +124,4 @@ class CharRNN(object):
                 mask[k:,j] = 0
             yield float(i+n)/len(data), X, mask
 
-def as_matrix(data):
-    n = len(data)
-    m = max(len(x) for x in data)
-    dtype = data[0].dtype
-    X = np.zeros((m,n), dtype=dtype)
-    mask = np.ones((m,n), dtype=np.int32)
-    for i in xrange(n):
-        x = data[i]
-        k = len(x)
-        X[:k,i] = x
-        mask[k:,i] = 0
-    return X, mask
 
-class BatchIter(object):
-    def __init__(self, data, size, shuffle=True):
-        #self.data = data
-        self.X, self.mask = as_matrix(data)
-        self.size = size
-        self.shuffle = shuffle
-
-    def __len__(self):
-        return int(math.ceil(self.X.shape[1]/float(self.size)))
-        #return int(math.ceil(len(self.data)/float(self.size)))
-
-    def __iter__(self):
-        if self.shuffle:
-            p = np.random.permutation(self.X.shape[1])
-            self.X = self.X[:,p]
-            self.mask = self.mask[:,p]
-            #random.shuffle(self.data)
-        size = self.size
-        for i in xrange(0, self.X.shape[1], size):
-            yield self.X[:,i:i+size], self.mask[:,i:i+size]
-        '''
-        data = self.data
-        size = self.size
-        for i in xrange(0, len(data), size):
-            xs = data[i:i+size]
-            n = len(xs)
-            m = max(len(x) for x in xs)
-            X = np.zeros((m,n), dtype=np.int32)
-            mask = np.ones((m,n), dtype=np.int32)
-            for j in xrange(n):
-                x = xs[j]
-                k = len(x)
-                X[:k,j] = x
-                mask[k:,j] = 0
-            yield X, mask
-       ''' 

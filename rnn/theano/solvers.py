@@ -68,6 +68,7 @@ class RMSprop(object):
         return theano.function([lr]+inputs, [err]+extras, updates=updates)
 
     def __call__(self, data, weights, inputs, err, extras, max_iters=-1):
+        #import sys
         f = self.compile(weights, inputs, err, extras)
         n = len(data)
         i = 0
@@ -76,6 +77,8 @@ class RMSprop(object):
             for args in data:
                 ret = f(self.lr, *args)
                 j += 1
+                #print i+j/n
+                #sys.stdout.flush()
                 yield i+j/n, ret
             i += 1
             self.lr = self.decay(self.lr)
