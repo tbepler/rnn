@@ -7,7 +7,7 @@ def as_matrix(data):
     m = max(len(x) for x in data)
     dtype = data[0].dtype
     X = np.zeros((m,n), dtype=dtype)
-    mask = np.ones((m,n), dtype=np.int32)
+    mask = np.ones((m,n), dtype=np.float32)
     for i in xrange(n):
         x = data[i]
         k = len(x)
