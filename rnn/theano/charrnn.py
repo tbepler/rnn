@@ -23,7 +23,7 @@ class CharRNN(object):
         self.data = T.matrix(dtype=itype)
         self.x = self.data[:-1] # T.matrix(dtype=itype)
         self.y = self.data[1:] # T.matrix(dtype=itype)
-        self.mask = T.matrix(dtype='int32')
+        self.mask = T.matrix()
         self.weights = []
         k,b = self.x.shape
         y_layer = self.x
@@ -116,7 +116,7 @@ class CharRNN(object):
             n = len(xs)
             m = max(len(x) for x in xs)
             X = np.zeros((m,n), dtype=np.int32)
-            mask = np.ones((m,n), dtype=np.int32)
+            mask = np.ones((m,n), dtype=np.float32)
             for j in xrange(n):
                 x = xs[j]
                 k = len(x)
