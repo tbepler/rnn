@@ -78,6 +78,9 @@ class LSTM(object):
         self.gact = gact
         self.cact = cact
 
+    @property
+    def units(self): return self.weights.shape[1]//4
+
     def scanl(self, y0, c0, x):
         return scanl(self.weights, y0, c0, x, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact)
