@@ -6,7 +6,7 @@ from activation import fast_tanh, fast_sigmoid
 from rnn.initializers import orthogonal
 
 def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmoid, gact=fast_tanh
-         , cact=fast_tanh ):
+         , cact=fast_tanh, mask=None):
     m = y0.shape[1]
     ifog = ifog + th.dot(y0, wy)
     i = iact(ifog[:,:m])
@@ -15,6 +15,10 @@ def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmo
     g = gact(ifog[:,3*m:])
     c = c0*f + i*g
     y = o*cact(c)
+    if mask is not None:
+        mask = mask.dimshuffle(0, 'x')
+        y *= mask
+        c *= mask
     return y, c
 
 def split(w):
@@ -34,20 +38,25 @@ def gates(bias, wx, x):
     ifog = ifog.reshape((k,b,ifog.shape[1]))
     return ifog
 
-def scanl(w, y0, c0, x, **kwargs):
+def lstm(w, y0, c0, x, mask=None, op=theano.scan, **kwargs):
     b, wx, wy = split(w)
     ifog = gates(b, wx, x)
-    f = lambda g, yp, cp, wy: step(g, yp, cp, wy, **kwargs)
-    [y,c], updates = theano.scan(f, sequences=ifog, outputs_info=[y0, c0], non_sequences=wy)
-    return y, c[-1]
+    if mask is not None:
+        f = lambda g, m, yp, cp, wy: step(g, yp, cp, wy, mask=m, **kwargs)
+        seqs = [ifog, mask]
+    else:
+        f = lambda g, yp, cp, wy: step(g, yp, cp, wy, **kwargs)
+        seqs = ifog
+    [y,c], updates = op(f, seqs, [y0, c0], non_sequences=wy)
+    return y, c
 
-def scanr(w, y0, c0, x, **kwargs):
-    b, wx, wy = split(w)
-    ifog = gates(b, wx, x)
-    f = lambda g, yp, cp, wy: step(g, yp, cp, wy, **kwargs)
-    [y,c], updates = theano.scan(f, sequences=ifog, outputs_info=[y0, c0], non_sequences=wy
-                             , go_backwards=True)
-    return y, c[-1]
+def scanl(w, y0, c0, x, mask=None, **kwargs):
+    return lstm(w, y0, c0, x, mask=mask, op=theano.scan, **kwargs)
+
+def scanr(w, y0, c0, x, mask=None, **kwargs):
+    op = lambda *args, **kwargs: theano.scan(*args, go_backwards=True, **kwargs)
+    y, c = lstm(w, y0, c0, x, mask=mask, op=op, **kwargs)
+    return y[::-1], c[::-1]
 
 def foldl(w, y0, c0, x, **kwargs):
     b, wx, wy = split(w)
@@ -81,20 +90,44 @@ class LSTM(object):
     @property
     def units(self): return self.weights.shape[1]//4
 
-    def scanl(self, y0, c0, x):
-        return scanl(self.weights, y0, c0, x, iact=self.iact, fact=self.fact, oact=self.oact
+    def scanl(self, y0, c0, x, mask=None):
+        return scanl(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact)
 
-    def scanr(self, y0, c0, x):
-        return scanr(self.weights, y0, c0, x, iact=self.iact, fact=self.fact, oact=self.oact
+    def scanr(self, y0, c0, x, mask=None):
+        return scanr(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact)
 
-    def foldl(self, y0, c0, x):
-        return foldl(self.weights, y0, c0, x, iact=self.iact, fact=self.fact, oact=self.oact
+    def foldl(self, y0, c0, x, mask=None):
+        return foldl(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact)
 
-    def foldr(self, y0, c0, x):
-        return foldr(self.weights, y0, c0, x, iact=self.iact, fact=self.fact, oact=self.oact
+    def foldr(self, y0, c0, x, mask=None):
+        return foldr(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact)
+
+class BiLSTM(object):
+    def __init__(self, ins, units, **kwargs):
+        self.n = units
+        self.lstml = LSTM(ins, units, **kwargs)
+        self.lstmr = LSTM(ins, units, **kwargs)
+
+    @property
+    def weights(self): return self.lstml.weights + self.lsmtr.weights
+
+    def __call__(self, x, mask=None):
+        b = x.shape[1]
+        y0 = th.zeros((b, self.n))
+        c0 = th.zeros((b, self.n))
+        yl, _ = self.lstml.scanl(y0, c0, x, mask=mask)
+        yr, _ = self.lstmr.scanr(y0, c0, x, mask=mask)
+        return th.concatenate([yl, yr], axis=yl.ndim-1)
+
+
+
+
+
+
+
 
 
