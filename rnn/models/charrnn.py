@@ -5,14 +5,14 @@ from collections import OrderedDict
 import math
 import random
 
-import lstm
-import linear
-import softmax
-import crossent
+import rnn.theano.lstm as lstm
+import rnn.theano.linear as linear
+import rnn.theano.softmax as softmax
+import rnn.theano.crossent as crossent
 
 from rnn.minibatcher import BatchIter
 
-import solvers
+import rnn.theano.solvers as solvers
 
 def null_func(*args, **kwargs):
     pass
@@ -43,13 +43,18 @@ class CharRNNGraph(object):
             self.layers[i].weights.set_value(weights[i])
         self.decoder.weights.set_value(weights[-1])
 
-    def copy_target(self, target):
+    def transfer(self, target, copy_shared=False):
         from copy import copy
         layers = [copy(l) for l in self.layers]
-        for layer in layers:
-            layer.weights = theano.shared(layer.weights.get_value(), target=target)
         decoder = copy(self.decoder)
-        decoder.weights = theano.shared(decoder.weights.get_value(), target=target)
+        if copy_shared:
+            for layer in layers:
+                layer.weights = theano.shared(layer.weights.get_value(), target=target)
+            decoder.weights = theano.shared(decoder.weights.get_value(), target=target)
+        else:
+            for layer in layers:
+                layer.weights = layer.weights.transfer(target)
+            decoder.weights = decoder.weights.transfer(target)
         cpy = copy(self)
         cpy.layers = layers
         cpy.decoder = decoder
@@ -70,13 +75,13 @@ class CharRNNGraph(object):
                 c0i = c0s[i]
             else:
                 c0i = T.zeros((b, layer.units))
-            yh, c = layer.scanl(y0i, c0i, yh, truncate_gradient=truncate_gradient)
+            yh, c = layer.scanl(y0i, c0i, yh)
             y_layers.append(yh)
             cs.append(c)
         yh = softmax.softmax(self.decoder(yh))
         return yh, y_layers, cs
     
-class CharRNN_new(object):
+class CharRNN(object):
     def __init__(self, n_in, n_out, layers, decoder=linear.Linear, solver=solvers.RMSprop(0.01)):
         self.n_in = n_in
         self.n_out = n_out
@@ -114,8 +119,15 @@ class CharRNN_new(object):
             setattr(self, k, v)
         self.setup(weights=state['weights'])
 
+    def _device_models(self, devices, copy_shared=False):
+        if len(devices) == 0:
+            return [self._theano_model]
+        return [self._theano_model.transfer(target, copy_shared=copy_shared) for target in devices]
+
     def _theano_crossent(self, Yh, Y, mask):
-        return crossent.crossent(Yh, Y)*mask
+        cent = T.zeros_like(Yh)
+        cent = T.set_subtensor(cent[Y], -T.log(Yh[Y])*mask)
+        return cent
 
     def _theano_confusion(self, Yh, Y, mask):
         Yh = T.argmax(Yh, axis=-1)
@@ -123,17 +135,19 @@ class CharRNN_new(object):
         C = T.zeros(shape)
         i,j = T.mgrid[0:C.shape[0], 0:C.shape[1]]
         C = T.set_subtensor(C[i,j,Y,Yh], 1)
-        mask = mask.dimshuffle(*(mask.shape + ['x','x']))
+        mask = T.shape_padright(T.shape_padright(mask))
         C = C*mask
         return C
 
     def _theano_loss(self, X, Y, mask, models, axis=0):
-        idxs = [T.arange(i, X.shape[1], len(models)) for i in len(models)]
+        idxs = [T.arange(i, X.shape[1], len(models)) for i in xrange(len(models))]
         Ys = [Y[:,idx] for idx in idxs]
         masks = [mask[:,idx] for idx in idxs]
         Yhs = [model(X[:,idx])[0] for model,idx in zip(models, idxs)]
-        cents = [T.sum(self._theano_crossent(Yh, Yi, maski), axis=axis) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
-        confs = [T.sum(self._theano_confusion(Yh, Yi, maski), axis=axis) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
+        if axis is None:
+            axis_conf = [0,1]
+        cents = [T.sum(self._theano_crossent(Yh, Yi, maski), axis=axis_conf) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
+        confs = [T.sum(self._theano_confusion(Yh, Yi, maski), axis=axis_conf) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
         if axis == 0:
             idxs = T.concatenate(idxs, axis=0)
             idx_inv = T.arange(X.shape[1])[idxs]
@@ -145,14 +159,11 @@ class CharRNN_new(object):
         return cent, conf
 
     def _compile_loss(self, dtype='int32', devices=[], axis=0):
-        if len(devices) == 0:
-            devices.append(self._theano_model)
-        else:
-            devices = [self._theano_model.copy_target(target) for target in devices]
+        devices = self._device_models(devices, copy_shared=True)
         data = T.matrix(dtype=dtype)
         X = data[:-1]
         Y = data[1:]
-        mask = T.matrix(dtype='float32')
+        mask = T.matrix()
         results = self._theano_loss(data[:-1], data[1:], mask[1:], devices, axis=axis)
         f = theano.function([data, mask], results)
         return f
@@ -171,7 +182,7 @@ class CharRNN_new(object):
     def loss(self, data, callback=null_func, devices=[], axis=None):
         if axis == 0:
             return self.loss_iter(data, callback=callback, devices=devices)
-        f = self.compile_loss(dtype=data.dtype, devices=devices, axis=axis)
+        f = self._compile_loss(dtype=data.dtype, devices=devices, axis=axis)
         callback(0, 'loss')
         cent, conf, i = 0, 0, 0
         for X, mask in data:
@@ -186,6 +197,10 @@ class CharRNN_new(object):
     def _theano_gradient_truncated(self, X, Y, mask, model, backprop):
         n = model.nlayers
         def step(i, *args):
+            gw0 = args[:len(model.weights)]
+            loss0 = args[len(model.weights)]
+            confusion0 = args[len(model.weights)+1]
+            args = args[len(model.weights)+2:]
             y0 = args[:n]
             c0 = args[n:2*n]
             X = args[2*n]
@@ -193,167 +208,99 @@ class CharRNN_new(object):
             mask = args[2*n+2]
             Yh,y_layers,cs = model(X[i:i+backprop], y0=y0, c0=c0)
             loss = T.sum(self._theano_crossent(Yh, Y[i:i+backprop], mask[i:i+backprop]))
-            gw = theano.grad(loss, model.weights)
+            gw = theano.grad(loss, model.weights, consider_constant=y0+c0)
+            gw = [gwi+gw0i for gwi,gw0i in zip(gw, gw0)]
             ys = [y_layer[-1] for y_layer in y_layers]
-            return gw + ys + cs
-            
+            confusion = T.sum(self._theano_confusion(Yh, Y[i:i+backprop], mask[i:i+backprop]), axis=[0,1])
+            loss = T.sum(self._theano_crossent(Yh, Y[i:i+backprop], mask[i:i+backprop]), axis=[0,1])
+            loss += loss0
+            confusion += confusion0
+            return gw + [loss, confusion] + ys + cs
+        idxs = T.arange(0, X.shape[0], backprop)
+        _,b = X.shape
+        y0 = [T.zeros((b,layer.units)) for layer in model.layers]
+        c0 = [T.zeros((b,layer.units)) for layer in model.layers]
+        gw0 = [T.zeros_like(w) for w in model.weights]
+        loss0 = 0
+        confusion0 = 0
+        res, _ = theano.foldl(step, idxs, gw0+[loss0, confusion0]+y0+c0, non_sequences=[X, Y, mask])
+        gws = res[:len(model.weights)]
+        loss = res[len(model.weights)]
+        confusion = res[len(model.weights)+1]
+        return gws, loss, confusion
 
-        pass
+    def _theano_gradient(self, X, Y, mask, models, truncated_backprop=0):
+        gws = []
+        losses = []
+        confusions = []
+        for i in xrange(len(models)):
+            idx = T.arange(i, X.shape[1], len(models))
+            if truncated_backprop > 0:
+                gw, loss, confusion = self._theano_gradient_truncated(X[:,idx], Y[:,idx], mask[:,idx], models[i], truncated_backprop)
+            else:
+                Yh,_,_ = model(X[:,idx])
+                loss = T.sum(self._theano_crossent(Yh, Y[:,idx], mask[:,idx]))
+                gw = theano.grad(loss, model.weights)
+                confusion = T.sum(self._theano_confusion(Yh, Y[:,idx], mask[:,idx]), axis=[0,1])
+                loss = T.sum(self._theano_crossent(Yh, Y[:,idx], mask[:,idx]), axis=[0,1])
+            gws.append(gw)
+            losses.append(loss)
+            confusions.append(confusion)
+        loss = sum(losses)
+        confusion = sum(confusions)
+        gws = zip(*gws)
+        return [sum(g) for g in gws], loss, confusion
 
-    def _theano_gradient(self, X, Y, model, truncated_backprop=0):
-        pass
+    def fit_steps(self, train, max_iters=100, truncated_backprop=-1, devices=[]):
+        models = self._device_models(devices, copy_shared=False)
+        data = T.matrix(dtype=train.dtype)
+        mask = T.matrix()
+        gws, loss, confusion = self._theano_gradient(data[:-1], data[1:], mask[1:], models, truncated_backprop=truncated_backprop)
+        weights = self._theano_model.weights
+        return self.solver(train, weights, gws, [data, mask], [loss, confusion], max_iters)
 
-
-
-class CharRNN(object):
-    def __init__(self, n_in, n_out, layers, decoder=linear.Linear, itype='int32'
-                 , solver=solvers.RMSprop(0.01)):
-        self.data = T.matrix(dtype=itype)
-        self.x = self.data[:-1] # T.matrix(dtype=itype)
-        self.y = self.data[1:] # T.matrix(dtype=itype)
-        self.mask = T.matrix(dtype='int32')
-        self.weights = []
-        k,b = self.x.shape
-        y_layer = self.x
-        self.y_layers = []
-        m = n_in
-        for n in layers:
-            layer = lstm.LSTM(m, n)
-            self.weights.append(layer.weights)
-            y0 = T.zeros((b, n))
-            c0 = T.zeros((b, n))
-            y_layer, _ = layer.scanl(y0, c0, y_layer)
-            self.y_layers.append(y_layer)
-            m = n
-        decode = decoder(m, n_out)
-        self.weights.append(decode.weights)
-        yh = decode(y_layer)
-        self.yh = softmax.softmax(yh)
-        self.loss_t = T.sum(crossent.crossent(self.yh, self.y)*self.mask[1:])
-        self.correct = T.sum(T.eq(T.argmax(self.yh, axis=2), self.y)*self.mask[1:])
-        self.count = T.sum(self.mask[1:])
-        self.solver = solver
-        #compile theano functions
-        self._loss = theano.function([self.data, self.mask], [self.loss_t, self.correct, self.count])
-        self._activations = theano.function([self.data], self.y_layers+[self.yh], givens={self.x:self.data})
-
-    def graph_predict(self, X, device=None):
-        k,b = self.x.shape
-        yh = X
-        for layer in self.layers:
-            n = layer.units
-            y0 = T.zeros((b, n))
-            c0 = T.zeros((b, n))
-            yh = layer.scanl(y0, c0, yh)
-        yh = softmax.softmax(self.decoder(yh))
-        if device is not None:
-            weights = [layer.weights for layer in self.layers] + [self.decoder.weights]
-            subst = {w: w.transfer(device) for w in weights}
-            yh = theano.clone(yh, subst)
-        return yh
-        
-    def graph_loss(self, Yh, Y, mask):
-        return T.sum(crossent.crossent(Yh, Y)*mask)
-
-    def graph_correct(self, Yh, Y, mask):
-        return T.sum(T.eq(T.argmax(Yh, axis=1), Y)*mask)
-
-    def graph_fit(self, data, mask, devices=None):
-        X = data[:-1]
-        Y = data[1:]
-        mask = mask[1:]
-        if devices is not None:
-            k,b = data.shape
-            loss, correct = 0, 0
-            for i in xrange(len(devices)):
-                idx = T.arange(i, b, len(devices))
-                yh = self.graph_predict(X[:,idx], device=devices[i])
-                loss += self.graph_loss(yh, Y[:,idx], mask[:,idx])
-                correct += self.graph_correct(yh, Y[:,idx], mask[:,idx])
-        else:
-            yh = self.graph_predict(X)
-            loss = self.graph_loss(yh, Y, mask)
-            correct = self.graph_correct(yh, Y, mask)
-        count = T.sum(self.mask)
-        return loss, correct, count
-
-
-    def fit(self, data_train, validate=None, batch_size=256, max_iters=100, callback=null_func):
-        weights = [layer.weights for layer in self.layers] + [self.decoder.weights]
-        data_symbol = T.matrix(dtype=data_train.dtype)
-        mask_symbol = T.matrix(dtype='int32')
-        steps = self.solver(BatchIter(data_train, batch_size), self.weights, [self.data, self.mask]
-                , self.loss_t, [self.correct, self.count], max_iters=max_iters)
-        if validate is not None:
-            validate = BatchIter(validate, batch_size, shuffle=False)
-        train_loss, train_correct, train_n = 0, 0, 0
+    def fit(self, train, validate=None, max_iters=100, callback=null_func, truncated_backprop=-1, devices=[]):
+        steps = self.fit_steps(train, max_iters=max_iters, truncated_backprop=truncated_backprop, devices=devices)
         callback(0, 'fit')
-        for it, (l,c,n) in steps:
-            train_loss += l
-            train_correct += c
-            train_n += n
+        train_loss, train_confusion = 0, 0
+        for it, (loss, confusion) in steps:
+            train_loss += loss
+            train_confusion += confusion
             if it % 1 == 0:
                 if validate is not None:
-                    res = self.loss_iter(validate, callback=callback)
-                    res['TrainLoss'] = train_loss/train_n
-                    res['TrainAccuracy'] = float(train_correct)/train_n
+                    val_loss, val_confusion = self.loss(validate, callback=callback, devices=devices)
+                    yield val_loss, val_confusion, train_loss, train_confusion
                 else:
-                    res = OrderedDict([('Loss', train_loss/train_n)
-                                       , ('Accuracy', float(train_correct)/train_n)])
-                train_loss, train_correct, train_n = 0, 0, 0
-                yield res
+                    yield train_loss, train_confusion
+                train_loss, train_confusion = 0, 0
             callback(it%1, 'fit')
-            
-    def loss_iter(self, data, callback=null_func):
-        callback(0, 'loss')
-        loss_, correct_, count_ = 0, 0, 0
+    
+    def _theano_transform(self, X, model, features):
+        _,y_layers,_ = model(X)
+        feats = [y_layers[i] for i in features]
+        feats = T.concatenate(feats, axis=2)
+        return feats
+
+    def _compile_transform(self, dtype, features, devices=[]):
+        models = self._device_models(devices, copy_shared=True)
+        data = T.matrix(dtype=train.dtype)
+        idxs = [T.arange(i, data.shape[1], len(devices)) for i in len(devices)]
+        feats = [self._theano_transform(data[:,idx], model, features) for idx,model in zip(idxs,models)]
+        feats = T.concatenate(feats, axis=1)
+        idxs = T.concatenate(idxs, axis=0)
+        inv_idx = T.arange(data.shape[1])[idxs]
+        feats = feats[:, inv_idx]
+        return theano.function([data], [feats])
+
+    def transform(self, data, features=[-1], devices=[], callback=null_func):
+        f = self._compile_transform(data.dtype, features, devices=devices)
+        callback(0, 'transform')
         i = 0
-        for X,mask in data:
+        for X in data:
+            Z = f(X)
             i += 1
             p = float(i)/len(data)
-            l,c,n = self._loss(X, mask)
-            loss_ += l
-            correct_ += c
-            count_ += n
-            callback(p, 'loss')
-        return OrderedDict([('Loss', loss_/count_), ('Accuracy', float(correct_)/count_)])
-
-    def loss(self, data, batch_size=256, callback=null_func):
-        iterator = BatchIter(data, batch_size)
-        return self.loss_iter(iterator, callback=callback)
-
-    def activations(self, data, batch_size=256, callback=null_func):
-        callback(0, 'activations')
-        for p,X,lens in self.batch_iter_no_mask(data, batch_size):
-            acts = self._activations(X)
-            for i in xrange(len(lens)):
-                n = lens[i]
-                yield [act[:n,i,:] for act in acts]
-
-    def batch_iter_no_mask(self, data, size):
-        for i in xrange(0, len(data), size):
-            xs = data[i:i+size]
-            n = len(xs)
-            m = max(len(x) for x in xs)
-            X = np.zeros((m,n), dtype=np.int32)
-            for j in xrange(n):
-                x = xs[j]
-                k = len(x)
-                X[:k,j] = x
-            yield float(i+n)/len(data), X, [len(x) for x in xs]
-
-    def batch_iter(self, data, size):
-        for i in xrange(0, len(data), size):
-            xs = data[i:i+size]
-            n = len(xs)
-            m = max(len(x) for x in xs)
-            X = np.zeros((m,n), dtype=np.int32)
-            mask = np.ones((m,n), dtype=np.int32)
-            for j in xrange(n):
-                x = xs[j]
-                k = len(x)
-                X[:k,j] = x
-                mask[k:,j] = 0
-            yield float(i+n)/len(data), X, mask
+            yield Z
+            callback(p, 'transform')
 
 

@@ -23,6 +23,10 @@ class BatchIter(object):
         self.size = size
         self.shuffle = shuffle
 
+    @property
+    def dtype(self):
+        return self.data[0].dtype
+
     def __len__(self):
         #return int(math.ceil(self.X.shape[1]/float(self.size)))
         return int(math.ceil(len(self.data)/float(self.size)))
