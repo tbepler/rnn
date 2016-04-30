@@ -126,7 +126,8 @@ class CharRNN(object):
 
     def _theano_crossent(self, Yh, Y, mask):
         cent = T.zeros_like(Yh)
-        cent = T.set_subtensor(cent[Y], -T.log(Yh[Y])*mask)
+        i,j = T.mgrid[0:cent.shape[0], 0:cent.shape[1]]
+        cent = T.set_subtensor(cent[i,j,Y], -T.log(Yh[i,j,Y])*mask)
         return cent
 
     def _theano_confusion(self, Yh, Y, mask):
