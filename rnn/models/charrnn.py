@@ -30,6 +30,10 @@ class CharRNNGraph(object):
             self.weights = weights
 
     @property
+    def nlayers(self):
+        return len(self.layers)
+
+    @property
     def weights(self):
         return [layer.weights for weights in self.layers] + [self.decoder.weights]
 
@@ -38,6 +42,18 @@ class CharRNNGraph(object):
         for i in xrange(len(self.layers)):
             self.layers[i].weights.set_value(weights[i])
         self.decoder.weights.set_value(weights[-1])
+
+    def copy_target(self, target):
+        from copy import copy
+        layers = [copy(l) for l in self.layers]
+        for layer in layers:
+            layer.weights = theano.shared(layer.weights.get_value(), target=target)
+        decoder = copy(self.decoder)
+        decoder.weights = theano.shared(decoder.weights.get_value(), target=target)
+        cpy = copy(self)
+        cpy.layers = layers
+        cpy.decoder = decoder
+        return cpy
 
     def __call__(self, X, y0=None, c0=None):
         k,b = X.shape
@@ -98,31 +114,93 @@ class CharRNN_new(object):
             setattr(self, k, v)
         self.setup(weights=state['weights'])
 
-    def loss_iter(self, data, callback=null_func):
-        callback(0, 'loss')
-        loss_, correct_, count_ = 0, 0, 0
-        i = 0
-        for X,mask in data:
-            i += 1
-            p = float(i)/len(data)
-            l,c,n = self._loss(X, mask)
-            loss_ += l
-            correct_ += c
-            count_ += n
-            callback(p, 'loss')
-        return OrderedDict([('Loss', loss_/count_), ('Accuracy', float(correct_)/count_)])
+    def _theano_crossent(self, Yh, Y, mask):
+        return crossent.crossent(Yh, Y)*mask
 
-    def compile_loss(dtype='int32', devices=[], axis=1):
+    def _theano_confusion(self, Yh, Y, mask):
+        Yh = T.argmax(Yh, axis=-1)
+        shape = list(Yh.shape) + [self.n_out, self.n_out]
+        C = T.zeros(shape)
+        i,j = T.mgrid[0:C.shape[0], 0:C.shape[1]]
+        C = T.set_subtensor(C[i,j,Y,Yh], 1)
+        mask = mask.dimshuffle(*(mask.shape + ['x','x']))
+        C = C*mask
+        return C
+
+    def _theano_loss(self, X, Y, mask, models, axis=0):
+        idxs = [T.arange(i, X.shape[1], len(models)) for i in len(models)]
+        Ys = [Y[:,idx] for idx in idxs]
+        masks = [mask[:,idx] for idx in idxs]
+        Yhs = [model(X[:,idx])[0] for model,idx in zip(models, idxs)]
+        cents = [T.sum(self._theano_crossent(Yh, Yi, maski), axis=axis) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
+        confs = [T.sum(self._theano_confusion(Yh, Yi, maski), axis=axis) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
+        if axis == 0:
+            idxs = T.concatenate(idxs, axis=0)
+            idx_inv = T.arange(X.shape[1])[idxs]
+            cent = T.concatenate(cents, axis=0)[idx_inv]
+            conf = T.concatenate(confs, axis=0)[idx_inv]
+        else:
+            cent = sum(cents)
+            conf = sum(confs)
+        return cent, conf
+
+    def _compile_loss(self, dtype='int32', devices=[], axis=0):
+        if len(devices) == 0:
+            devices.append(self._theano_model)
+        else:
+            devices = [self._theano_model.copy_target(target) for target in devices]
         data = T.matrix(dtype=dtype)
         X = data[:-1]
         Y = data[1:]
         mask = T.matrix(dtype='float32')
-        if len(devices) > 0:
-            pass
-        else:
-            Yh = self._theano_model(X)
+        results = self._theano_loss(data[:-1], data[1:], mask[1:], devices, axis=axis)
+        f = theano.function([data, mask], results)
+        return f
 
-    def loss(self, data, callback=null_func, **kwargs):
+    def loss_iter(self, data, callback=null_func, devices=[]):
+        f = self._compile_loss(dtype=data.dtype, devices=devices, axis=0)
+        callback(0, 'loss')
+        i = 0
+        for X, mask in data:
+            res = f(X, mask)
+            i += 1
+            p = float(i)/len(data)
+            callback(p, 'loss')
+            yield res
+
+    def loss(self, data, callback=null_func, devices=[], axis=None):
+        if axis == 0:
+            return self.loss_iter(data, callback=callback, devices=devices)
+        f = self.compile_loss(dtype=data.dtype, devices=devices, axis=axis)
+        callback(0, 'loss')
+        cent, conf, i = 0, 0, 0
+        for X, mask in data:
+            cent_, conf_ = f(X, mask)
+            cent += cent_
+            conf += conf_
+            i += 1
+            p = float(i)/len(data)
+            callback(p, 'loss')
+        return cent, conf
+
+    def _theano_gradient_truncated(self, X, Y, mask, model, backprop):
+        n = model.nlayers
+        def step(i, *args):
+            y0 = args[:n]
+            c0 = args[n:2*n]
+            X = args[2*n]
+            Y = args[2*n+1]
+            mask = args[2*n+2]
+            Yh,y_layers,cs = model(X[i:i+backprop], y0=y0, c0=c0)
+            loss = T.sum(self._theano_crossent(Yh, Y[i:i+backprop], mask[i:i+backprop]))
+            gw = theano.grad(loss, model.weights)
+            ys = [y_layer[-1] for y_layer in y_layers]
+            return gw + ys + cs
+            
+
+        pass
+
+    def _theano_gradient(self, X, Y, model, truncated_backprop=0):
         pass
 
 
