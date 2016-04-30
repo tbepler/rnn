@@ -3,6 +3,9 @@
 #*#
 .#*
 
+#vim
+*.swp
+
 #fortran mod files
 *.mod
 

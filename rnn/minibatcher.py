@@ -43,7 +43,7 @@ class BatchIter(object):
         dtype = self.data[0].dtype
         m = max(len(x) for x in self.data)
         X = np.zeros((m, size), dtype=dtype)
-        mask = np.ones((m, size), dtype=np.int32)
+        mask = np.ones((m, size), dtype=np.int8)
         for i in xrange(0, len(self.data), size):
             n = min(len(self.data)-i, size)
             for j in xrange(n):

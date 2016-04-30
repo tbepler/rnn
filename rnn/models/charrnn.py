@@ -163,7 +163,7 @@ class CharRNN(object):
         data = T.matrix(dtype=dtype)
         X = data[:-1]
         Y = data[1:]
-        mask = T.matrix()
+        mask = T.matrix(dtype='int8')
         results = self._theano_loss(data[:-1], data[1:], mask[1:], devices, axis=axis)
         f = theano.function([data, mask], results)
         return f
