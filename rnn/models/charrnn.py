@@ -133,7 +133,7 @@ class CharRNN(object):
     def _theano_confusion(self, Yh, Y, mask):
         Yh = T.argmax(Yh, axis=-1)
         shape = list(Yh.shape) + [self.n_out, self.n_out]
-        C = T.zeros(shape)
+        C = T.zeros(shape, dtype='int64')
         i,j = T.mgrid[0:C.shape[0], 0:C.shape[1]]
         C = T.set_subtensor(C[i,j,Y,Yh], 1)
         mask = T.shape_padright(T.shape_padright(mask))
@@ -147,6 +147,8 @@ class CharRNN(object):
         Yhs = [model(X[:,idx])[0] for model,idx in zip(models, idxs)]
         if axis is None:
             axis_conf = [0,1]
+        else:
+            axis_conf = axis
         cents = [T.sum(self._theano_crossent(Yh, Yi, maski), axis=axis_conf) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
         confs = [T.sum(self._theano_confusion(Yh, Yi, maski), axis=axis_conf) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
         if axis == 0:
