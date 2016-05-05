@@ -38,8 +38,15 @@ def gates(bias, wx, x):
     ifog = ifog.reshape((k,b,ifog.shape[1]))
     return ifog
 
-def lstm(w, y0, c0, x, mask=None, op=theano.scan, **kwargs):
+def flatten_left(shape):
+    return [shape[0]*shape[1]] + list(shape[2:])
+
+def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
+    import sys
+    print 'Compiling LSTM'
+    sys.stdout.flush()
     b, wx, wy = split(w)
+    n = x.shape[0]
     ifog = gates(b, wx, x)
     if mask is not None:
         f = lambda g, m, yp, cp, wy: step(g, yp, cp, wy, mask=m, **kwargs)
@@ -47,15 +54,69 @@ def lstm(w, y0, c0, x, mask=None, op=theano.scan, **kwargs):
     else:
         f = lambda g, yp, cp, wy: step(g, yp, cp, wy, **kwargs)
         seqs = ifog
-    [y,c], updates = op(f, seqs, [y0, c0], non_sequences=wy)
+    if unroll > 1:
+        print 'Compiling unrolled lstm'
+        sys.stdout.flush()
+        def _unroll_step(*args):
+            g = args[0]
+            if mask is not None:
+                m = args[1]
+                args = args[1:]
+            yp, cp, wy = args[1], args[2], args[3]
+            yp, cp = yp[-1], cp[-1]
+            ys, cs = [], []
+            for j in xrange(unroll):
+                mj = m[j] if m is not None else None
+                yp, cp = step(g[j], yp, cp, wy, mask=mj, **kwargs)
+                ys.append(yp)
+                cs.append(cp)
+            return th.stack(ys), th.stack(cs)
+        #align the sequences to mulitples of unroll
+        pad = n % unroll
+        ifog = th.concatenate([ifog, th.zeros((pad, ifog.shape[1], ifog.shape[2]), dtype=ifog.dtype)], axis=0)
+        if mask is not None:
+            mask = th.concatenate([mask, th.zeros((pad, mask.shape[1]), dtype=mask.dtype)], axis=0)
+        #reshape the sequences into chunks of size unroll
+        chunks = n // unroll
+        ifog = ifog.reshape((chunks, unroll, ifog.shape[1], ifog.shape[2]))
+        if mask is not None:
+            mask = mask.reshape((chunks, unroll, mask.shape[1]))
+        #peel the list to align
+        print 'Generating correctly shaped y0 and c0'
+        sys.stdout.flush()
+        pad_y0, pad_c0 = th.tile(th.shape_padleft(y0), (unroll, 1, 1)), th.tile(th.shape_padleft(c0), (unroll, 1, 1))
+        #have to unbroadcast the below or ifelse complains about type mismatch......
+        #pad_y0, pad_c0 = th.unbroadcast(th.shape_padleft(y0), 0), th.unbroadcast(th.shape_padleft(c0), 0)
+        if mask is not None:
+            seqs = [ifog, mask]
+        else:
+            seqs = [ifog]
+        print 'Compiling unrolled scan with unroll={}'.format(unroll)
+        sys.stdout.flush()
+        [y, c], _ = op(_unroll_step, seqs, [pad_y0, pad_c0], non_sequences=wy)
+        print 'Done compiling unrolled scan'
+        sys.stdout.flush()
+        #flatten y and c chunks and truncate to n
+        y = th.reshape(y, flatten_left(y.shape))[:n]
+        c = th.reshape(c, flatten_left(c.shape))[:n]
+        #compute and append peeled y and c
+        #seqs_peel = [ifog[-peel:], mask[-peel:]] if mask is not None else [ifog[-peel:]]
+        #[ypeel, cpeel], _ = op(f, seqs_peel, [y[-1], c[-1]], non_sequences=wy) 
+        #y_with_peel, c_with_peel = th.concatenate([y, ypeel], axis=0), th.concatenate([c, cpeel], axis=0)
+        #from theano.ifelse import ifelse
+        #y, c = ifelse(peel > 0, (y_with_peel, c_with_peel), (y, c))
+        #ypeel, cpeel = ifelse(peel > 0, (ypeel, cpeel), (pad_y0, pad_c0))
+        #idxs = th.arange(peel, n, unroll)
+        #y, c = ifelse(peel > 0, (th.concatenate([ypeel, y], axis=0), th.concatenate([cpeel, c], axis=0)), (y,c))
+    else:
+        [y, c], _ = op(f, seqs, [y0, c0], non_sequences=wy)
     return y, c
 
 def scanl(w, y0, c0, x, mask=None, **kwargs):
     return lstm(w, y0, c0, x, mask=mask, op=theano.scan, **kwargs)
 
 def scanr(w, y0, c0, x, mask=None, **kwargs):
-    op = lambda *args, **kwargs: theano.scan(*args, go_backwards=True, **kwargs)
-    y, c = lstm(w, y0, c0, x, mask=mask, op=op, **kwargs)
+    y, c = lstm(w, y0, c0, x[::-1], mask=mask, op=theano.scan, **kwargs)
     return y[::-1], c[::-1]
 
 def foldl(w, y0, c0, x, **kwargs):
@@ -90,21 +151,21 @@ class LSTM(object):
     @property
     def units(self): return self.weights.shape[1]//4
 
-    def scanl(self, y0, c0, x, mask=None):
+    def scanl(self, y0, c0, x, mask=None, **kwargs):
         return scanl(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
-                     , gact=self.gact, cact=self.cact)
+                     , gact=self.gact, cact=self.cact, **kwargs)
 
-    def scanr(self, y0, c0, x, mask=None):
+    def scanr(self, y0, c0, x, mask=None, **kwargs):
         return scanr(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
-                     , gact=self.gact, cact=self.cact)
+                     , gact=self.gact, cact=self.cact, **kwargs)
 
-    def foldl(self, y0, c0, x, mask=None):
+    def foldl(self, y0, c0, x, mask=None, **kwargs):
         return foldl(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
-                     , gact=self.gact, cact=self.cact)
+                     , gact=self.gact, cact=self.cact, **kwargs)
 
-    def foldr(self, y0, c0, x, mask=None):
+    def foldr(self, y0, c0, x, mask=None, **kwargs):
         return foldr(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
-                     , gact=self.gact, cact=self.cact)
+                     , gact=self.gact, cact=self.cact, **kwargs)
 
 class BiLSTM(object):
     def __init__(self, ins, units, **kwargs):
@@ -115,12 +176,12 @@ class BiLSTM(object):
     @property
     def weights(self): return self.lstml.weights + self.lsmtr.weights
 
-    def __call__(self, x, mask=None):
+    def __call__(self, x, mask=None, **kwargs):
         b = x.shape[1]
         y0 = th.zeros((b, self.n))
         c0 = th.zeros((b, self.n))
-        yl, _ = self.lstml.scanl(y0, c0, x, mask=mask)
-        yr, _ = self.lstmr.scanr(y0, c0, x, mask=mask)
+        yl, _ = self.lstml.scanl(y0, c0, x, mask=mask, **kwargs)
+        yr, _ = self.lstmr.scanr(y0, c0, x, mask=mask, **kwargs)
         return th.concatenate([yl, yr], axis=yl.ndim-1)
 
 

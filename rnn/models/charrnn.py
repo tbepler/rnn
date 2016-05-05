@@ -35,10 +35,10 @@ class CharRNNGraph(object):
 
     @property
     def weights(self):
-        return [layer.weights for weights in self.layers] + [self.decoder.weights]
+        return [layer.weights for layer in self.layers] + [self.decoder.weights]
 
     @weights.setter
-    def weights(self, ws):
+    def weights(self, weights):
         for i in xrange(len(self.layers)):
             self.layers[i].weights.set_value(weights[i])
         self.decoder.weights.set_value(weights[-1])
@@ -60,7 +60,7 @@ class CharRNNGraph(object):
         cpy.decoder = decoder
         return cpy
 
-    def __call__(self, X, y0=None, c0=None):
+    def __call__(self, X, y0=None, c0=None, unroll=-1):
         k,b = X.shape
         yh = X
         y_layers = []
@@ -68,26 +68,27 @@ class CharRNNGraph(object):
         for i in xrange(len(self.layers)):
             layer = self.layers[i]
             if y0 is not None:
-                y0i = y0s[i]
+                y0i = y0[i]
             else:
                 y0i = T.zeros((b,layer.units))
             if c0 is not None:
-                c0i = c0s[i]
+                c0i = c0[i]
             else:
                 c0i = T.zeros((b, layer.units))
-            yh, c = layer.scanl(y0i, c0i, yh)
+            yh, c = layer.scanl(y0i, c0i, yh, unroll=unroll)
             y_layers.append(yh)
             cs.append(c)
         yh = softmax.softmax(self.decoder(yh))
         return yh, y_layers, cs
     
 class CharRNN(object):
-    def __init__(self, n_in, n_out, layers, decoder=linear.Linear, solver=solvers.RMSprop(0.01)):
+    def __init__(self, n_in, n_out, layers, decoder=linear.Linear, solver=solvers.RMSprop(0.01), unroll=20):
         self.n_in = n_in
         self.n_out = n_out
         self.layers = layers
         self.decoder = decoder
         self.solver = solver
+        self.unroll = unroll
         self.setup()
 
     def setup(self, weights=None):
@@ -106,7 +107,16 @@ class CharRNN(object):
         params['layers'] = self.layers
         params['decoder'] = self.decoder
         params['solver'] = self.solver
+        params['unroll'] = self.unroll
         return params
+    
+    def load_parameters(self, params):
+        self.n_in = params['n_in']
+        self.n_out = params['n_out']
+        self.layers = params['layers']
+        self.decoder = params.get('decoder', linear.Linear)
+        self.solver = params.get('solver', solvers.RMSprop(0.01))
+        self.unroll = params.get('unroll', 20)
 
     def __getstate__(self):
         state = {}
@@ -115,8 +125,7 @@ class CharRNN(object):
         return state
 
     def __setstate__(self, state):
-        for k,v in state['params'].iteritems():
-            setattr(self, k, v)
+        self.load_parameters(state['params'])
         self.setup(weights=state['weights'])
 
     def _device_models(self, devices, copy_shared=False):
@@ -144,7 +153,7 @@ class CharRNN(object):
         idxs = [T.arange(i, X.shape[1], len(models)) for i in xrange(len(models))]
         Ys = [Y[:,idx] for idx in idxs]
         masks = [mask[:,idx] for idx in idxs]
-        Yhs = [model(X[:,idx])[0] for model,idx in zip(models, idxs)]
+        Yhs = [model(X[:,idx], unroll=self.unroll)[0] for model,idx in zip(models, idxs)]
         if axis is None:
             axis_conf = [0,1]
         else:
@@ -198,6 +207,9 @@ class CharRNN(object):
         return cent, conf
 
     def _theano_gradient_truncated(self, X, Y, mask, model, backprop):
+        print 'Compiling gradient with truncated backprop'
+        import sys
+        sys.stdout.flush()
         n = model.nlayers
         def step(i, *args):
             gw0 = args[:len(model.weights)]
@@ -209,10 +221,13 @@ class CharRNN(object):
             X = args[2*n]
             Y = args[2*n+1]
             mask = args[2*n+2]
-            Yh,y_layers,cs = model(X[i:i+backprop], y0=y0, c0=c0)
+            i = theano.printing.Print('backprop index')(i)
+            Yh,y_layers,cs = model(X[i:i+backprop], y0=y0, c0=c0, unroll=self.unroll)
             loss = T.sum(self._theano_crossent(Yh, Y[i:i+backprop], mask[i:i+backprop]))
-            gw = theano.grad(loss, model.weights, consider_constant=y0+c0)
+            constants = list(y0) + list(c0) + [i]
+            gw = theano.grad(loss, model.weights, consider_constant=constants)
             gw = [gwi+gw0i for gwi,gw0i in zip(gw, gw0)]
+            cs = [c[-1] for c in cs]
             ys = [y_layer[-1] for y_layer in y_layers]
             confusion = T.sum(self._theano_confusion(Yh, Y[i:i+backprop], mask[i:i+backprop]), axis=[0,1])
             loss = T.sum(self._theano_crossent(Yh, Y[i:i+backprop], mask[i:i+backprop]), axis=[0,1])
@@ -224,9 +239,13 @@ class CharRNN(object):
         y0 = [T.zeros((b,layer.units)) for layer in model.layers]
         c0 = [T.zeros((b,layer.units)) for layer in model.layers]
         gw0 = [T.zeros_like(w) for w in model.weights]
-        loss0 = 0
-        confusion0 = 0
+        loss0 = T.zeros(self.n_out)
+        confusion0 = T.zeros((self.n_out, self.n_out), dtype='int64')
+        print 'Building truncated gradient fold'
+        sys.stdout.flush()
         res, _ = theano.foldl(step, idxs, gw0+[loss0, confusion0]+y0+c0, non_sequences=[X, Y, mask])
+        print 'Done building truncated gradient fold'
+        sys.stdout.flush()
         gws = res[:len(model.weights)]
         loss = res[len(model.weights)]
         confusion = res[len(model.weights)+1]
@@ -241,7 +260,8 @@ class CharRNN(object):
             if truncated_backprop > 0:
                 gw, loss, confusion = self._theano_gradient_truncated(X[:,idx], Y[:,idx], mask[:,idx], models[i], truncated_backprop)
             else:
-                Yh,_,_ = model(X[:,idx])
+                model = models[i]
+                Yh,_,_ = model(X[:,idx], unroll=self.unroll)
                 loss = T.sum(self._theano_crossent(Yh, Y[:,idx], mask[:,idx]))
                 gw = theano.grad(loss, model.weights)
                 confusion = T.sum(self._theano_confusion(Yh, Y[:,idx], mask[:,idx]), axis=[0,1])
@@ -257,16 +277,24 @@ class CharRNN(object):
     def fit_steps(self, train, max_iters=100, truncated_backprop=-1, devices=[]):
         models = self._device_models(devices, copy_shared=False)
         data = T.matrix(dtype=train.dtype)
-        mask = T.matrix()
+        mask = T.matrix(dtype='int8')
+        print "Compiling gradient"
+        import sys
+        sys.stdout.flush()
         gws, loss, confusion = self._theano_gradient(data[:-1], data[1:], mask[1:], models, truncated_backprop=truncated_backprop)
         weights = self._theano_model.weights
-        return self.solver(train, weights, gws, [data, mask], [loss, confusion], max_iters)
+        print 'Building solver'
+        sys.stdout.flush()
+        return self.solver(train, [data, mask], [loss, confusion], weights, grads=gws, max_iters=max_iters)        
 
     def fit(self, train, validate=None, max_iters=100, callback=null_func, truncated_backprop=-1, devices=[]):
         steps = self.fit_steps(train, max_iters=max_iters, truncated_backprop=truncated_backprop, devices=devices)
+        print 'Done building solver'
+        import sys
+        sys.stdout.flush()
         callback(0, 'fit')
         train_loss, train_confusion = 0, 0
-        for it, (loss, confusion) in steps:
+        for it, [loss, confusion] in steps:
             train_loss += loss
             train_confusion += confusion
             if it % 1 == 0:
