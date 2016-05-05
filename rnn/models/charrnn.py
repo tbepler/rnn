@@ -82,7 +82,7 @@ class CharRNNGraph(object):
         return yh, y_layers, cs
     
 class CharRNN(object):
-    def __init__(self, n_in, n_out, layers, decoder=linear.Linear, solver=solvers.RMSprop(0.01), unroll=20):
+    def __init__(self, n_in, n_out, layers, decoder=linear.Linear, solver=solvers.RMSprop(0.01), unroll=-1):
         self.n_in = n_in
         self.n_out = n_out
         self.layers = layers
@@ -116,7 +116,7 @@ class CharRNN(object):
         self.layers = params['layers']
         self.decoder = params.get('decoder', linear.Linear)
         self.solver = params.get('solver', solvers.RMSprop(0.01))
-        self.unroll = params.get('unroll', 20)
+        self.unroll = params.get('unroll', -1)
 
     def __getstate__(self):
         state = {}
@@ -149,17 +149,52 @@ class CharRNN(object):
         C = C*mask
         return C
 
-    def _theano_loss(self, X, Y, mask, models, axis=0):
+    def _theano_loss_chunked(self, X, Y, mask, model, axis, chunk_size):
+        n = model.nlayers
+        def _step(i, cent0, conf0, *args):
+            y0 = args[:n]
+            c0 = args[n:2*n]
+            X = args[2*n][i:i+chunk_size]
+            Y = args[2*n+1][i:i+chunk_size]
+            mask = args[2*n+2][i:i+chunk_size]
+            Yh, y_layers, cs = model(X, c0=c0, y0=y0, unroll=self.unroll)
+            cent = cent0 + T.sum(self._theano_crossent(Yh, Y, mask), axis=axis)
+            conf = conf0 + T.sum(self._theano_confusion(Yh, Y, mask), axis=axis)
+            ys = [y_layer[-1] for y_layer in y_layers] 
+            cs = [c[-1] for c in cs]
+            return [cent, conf] + ys + cs
+        idxs = T.arange(0, X.shape[0], chunk_size)
+        _,b = X.shape
+        y0 = [T.zeros((b,layer.units)) for layer in model.layers]
+        c0 = [T.zeros((b,layer.units)) for layer in model.layers]
+        if axis == 0:
+            loss0 = T.zeros((b,self.n_out))
+            confusion0 = T.zeros((b, self.n_out, self.n_out), dtype='int64')
+        else:
+            loss0 = T.zeros(self.n_out)
+            confusion0 = T.zeros((self.n_out, self.n_out), dtype='int64')
+        res, _ = theano.foldl(_step, idxs, [loss0, confusion0]+y0+c0, non_sequences=[X, Y, mask])
+        return res[0], res[1]
+
+    def _theano_loss(self, X, Y, mask, models, axis=0, chunk_size=-1):
         idxs = [T.arange(i, X.shape[1], len(models)) for i in xrange(len(models))]
         Ys = [Y[:,idx] for idx in idxs]
         masks = [mask[:,idx] for idx in idxs]
-        Yhs = [model(X[:,idx], unroll=self.unroll)[0] for model,idx in zip(models, idxs)]
         if axis is None:
             axis_conf = [0,1]
         else:
             axis_conf = axis
-        cents = [T.sum(self._theano_crossent(Yh, Yi, maski), axis=axis_conf) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
-        confs = [T.sum(self._theano_confusion(Yh, Yi, maski), axis=axis_conf) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
+        if chunk_size > 0:
+            cents = []
+            confs = []
+            for i in xrange(len(models)):
+                cent, conf = self._theano_loss_chunked(X[:,idxs[i]], Ys[i], masks[i], models[i], axis_conf, chunk_size)
+                cents.append(cent)
+                confs.append(conf)
+        else:
+            Yhs = [model(X[:,idx], unroll=self.unroll)[0] for model,idx in zip(models, idxs)]
+            cents = [T.sum(self._theano_crossent(Yh, Yi, maski), axis=axis_conf) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
+            confs = [T.sum(self._theano_confusion(Yh, Yi, maski), axis=axis_conf) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
         if axis == 0:
             idxs = T.concatenate(idxs, axis=0)
             idx_inv = T.arange(X.shape[1])[idxs]
@@ -170,18 +205,18 @@ class CharRNN(object):
             conf = sum(confs)
         return cent, conf
 
-    def _compile_loss(self, dtype='int32', devices=[], axis=0):
+    def _compile_loss(self, dtype='int32', devices=[], axis=0, chunk_size=-1):
         devices = self._device_models(devices, copy_shared=True)
         data = T.matrix(dtype=dtype)
         X = data[:-1]
         Y = data[1:]
         mask = T.matrix(dtype='int8')
-        results = self._theano_loss(data[:-1], data[1:], mask[1:], devices, axis=axis)
+        results = self._theano_loss(data[:-1], data[1:], mask[1:], devices, axis=axis, chunk_size=chunk_size)
         f = theano.function([data, mask], results)
         return f
 
-    def loss_iter(self, data, callback=null_func, devices=[]):
-        f = self._compile_loss(dtype=data.dtype, devices=devices, axis=0)
+    def loss_iter(self, data, callback=null_func, devices=[], chunk_size=-1):
+        f = self._compile_loss(dtype=data.dtype, devices=devices, axis=0, chunk_size=chunk_size)
         callback(0, 'loss')
         i = 0
         for X, mask in data:
@@ -191,10 +226,10 @@ class CharRNN(object):
             callback(p, 'loss')
             yield res
 
-    def loss(self, data, callback=null_func, devices=[], axis=None):
+    def loss(self, data, callback=null_func, devices=[], axis=None, chunk_size=-1):
         if axis == 0:
-            return self.loss_iter(data, callback=callback, devices=devices)
-        f = self._compile_loss(dtype=data.dtype, devices=devices, axis=axis)
+            return self.loss_iter(data, callback=callback, devices=devices, chunk_size=chunk_size)
+        f = self._compile_loss(dtype=data.dtype, devices=devices, axis=axis, chunk_size=chunk_size)
         callback(0, 'loss')
         cent, conf, i = 0, 0, 0
         for X, mask in data:
@@ -207,9 +242,6 @@ class CharRNN(object):
         return cent, conf
 
     def _theano_gradient_truncated(self, X, Y, mask, model, backprop):
-        print 'Compiling gradient with truncated backprop'
-        import sys
-        sys.stdout.flush()
         n = model.nlayers
         def step(i, *args):
             gw0 = args[:len(model.weights)]
@@ -221,7 +253,6 @@ class CharRNN(object):
             X = args[2*n]
             Y = args[2*n+1]
             mask = args[2*n+2]
-            i = theano.printing.Print('backprop index')(i)
             Yh,y_layers,cs = model(X[i:i+backprop], y0=y0, c0=c0, unroll=self.unroll)
             loss = T.sum(self._theano_crossent(Yh, Y[i:i+backprop], mask[i:i+backprop]))
             constants = list(y0) + list(c0) + [i]
@@ -241,11 +272,7 @@ class CharRNN(object):
         gw0 = [T.zeros_like(w) for w in model.weights]
         loss0 = T.zeros(self.n_out)
         confusion0 = T.zeros((self.n_out, self.n_out), dtype='int64')
-        print 'Building truncated gradient fold'
-        sys.stdout.flush()
         res, _ = theano.foldl(step, idxs, gw0+[loss0, confusion0]+y0+c0, non_sequences=[X, Y, mask])
-        print 'Done building truncated gradient fold'
-        sys.stdout.flush()
         gws = res[:len(model.weights)]
         loss = res[len(model.weights)]
         confusion = res[len(model.weights)+1]
@@ -278,20 +305,12 @@ class CharRNN(object):
         models = self._device_models(devices, copy_shared=False)
         data = T.matrix(dtype=train.dtype)
         mask = T.matrix(dtype='int8')
-        print "Compiling gradient"
-        import sys
-        sys.stdout.flush()
         gws, loss, confusion = self._theano_gradient(data[:-1], data[1:], mask[1:], models, truncated_backprop=truncated_backprop)
         weights = self._theano_model.weights
-        print 'Building solver'
-        sys.stdout.flush()
         return self.solver(train, [data, mask], [loss, confusion], weights, grads=gws, max_iters=max_iters)        
 
     def fit(self, train, validate=None, max_iters=100, callback=null_func, truncated_backprop=-1, devices=[]):
         steps = self.fit_steps(train, max_iters=max_iters, truncated_backprop=truncated_backprop, devices=devices)
-        print 'Done building solver'
-        import sys
-        sys.stdout.flush()
         callback(0, 'fit')
         train_loss, train_confusion = 0, 0
         for it, [loss, confusion] in steps:
@@ -299,7 +318,7 @@ class CharRNN(object):
             train_confusion += confusion
             if it % 1 == 0:
                 if validate is not None:
-                    val_loss, val_confusion = self.loss(validate, callback=callback, devices=devices)
+                    val_loss, val_confusion = self.loss(validate, callback=callback, devices=devices, chunk_size=truncated_backprop)
                     yield val_loss, val_confusion, train_loss, train_confusion
                 else:
                     yield train_loss, train_confusion

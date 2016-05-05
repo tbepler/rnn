@@ -42,9 +42,6 @@ def flatten_left(shape):
     return [shape[0]*shape[1]] + list(shape[2:])
 
 def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
-    import sys
-    print 'Compiling LSTM'
-    sys.stdout.flush()
     b, wx, wy = split(w)
     n = x.shape[0]
     ifog = gates(b, wx, x)
@@ -55,13 +52,13 @@ def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
         f = lambda g, yp, cp, wy: step(g, yp, cp, wy, **kwargs)
         seqs = ifog
     if unroll > 1:
-        print 'Compiling unrolled lstm'
-        sys.stdout.flush()
         def _unroll_step(*args):
             g = args[0]
             if mask is not None:
                 m = args[1]
                 args = args[1:]
+            else:
+                m = None
             yp, cp, wy = args[1], args[2], args[3]
             yp, cp = yp[-1], cp[-1]
             ys, cs = [], []
@@ -72,18 +69,16 @@ def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
                 cs.append(cp)
             return th.stack(ys), th.stack(cs)
         #align the sequences to mulitples of unroll
-        pad = n % unroll
+        pad = (unroll - n % unroll) % unroll
         ifog = th.concatenate([ifog, th.zeros((pad, ifog.shape[1], ifog.shape[2]), dtype=ifog.dtype)], axis=0)
         if mask is not None:
             mask = th.concatenate([mask, th.zeros((pad, mask.shape[1]), dtype=mask.dtype)], axis=0)
         #reshape the sequences into chunks of size unroll
-        chunks = n // unroll
+        chunks = (n+pad) // unroll
         ifog = ifog.reshape((chunks, unroll, ifog.shape[1], ifog.shape[2]))
         if mask is not None:
             mask = mask.reshape((chunks, unroll, mask.shape[1]))
         #peel the list to align
-        print 'Generating correctly shaped y0 and c0'
-        sys.stdout.flush()
         pad_y0, pad_c0 = th.tile(th.shape_padleft(y0), (unroll, 1, 1)), th.tile(th.shape_padleft(c0), (unroll, 1, 1))
         #have to unbroadcast the below or ifelse complains about type mismatch......
         #pad_y0, pad_c0 = th.unbroadcast(th.shape_padleft(y0), 0), th.unbroadcast(th.shape_padleft(c0), 0)
@@ -91,11 +86,7 @@ def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
             seqs = [ifog, mask]
         else:
             seqs = [ifog]
-        print 'Compiling unrolled scan with unroll={}'.format(unroll)
-        sys.stdout.flush()
         [y, c], _ = op(_unroll_step, seqs, [pad_y0, pad_c0], non_sequences=wy)
-        print 'Done compiling unrolled scan'
-        sys.stdout.flush()
         #flatten y and c chunks and truncate to n
         y = th.reshape(y, flatten_left(y.shape))[:n]
         c = th.reshape(c, flatten_left(c.shape))[:n]
