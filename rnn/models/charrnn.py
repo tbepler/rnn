@@ -326,14 +326,48 @@ class CharRNN(object):
             callback(it%1, 'fit')
     
     def _theano_transform(self, X, model, features):
-        _,y_layers,_ = model(X)
+        _,y_layers,_ = model(X, unroll=self.unroll)
         feats = [y_layers[i] for i in features]
         feats = T.concatenate(feats, axis=2)
         return feats
 
-    def _compile_transform(self, dtype, features, devices=[]):
+    def _compile_transform_chunks(self, data, models, chunk_size, features):
+        n = self._theano_model.nlayers
+        c0 = [T.matrix() for _ in xrange(n)]
+        y0 = [T.matrix() for _ in xrange(n)]
+        idxs = [T.arange(i, data.shape[1], len(models)) for i in len(models)]
+        feats, cs, ys = [], [], []
+        for idx, model in zip(idxs, models):
+            _,y_layers,cs_ = model(data[:,idx], c0=[c[:,idx] for c in c0], y0=[y[:,idx] for y in y0], unroll=self.unroll)
+            f = [y_layers[i] for i in features]
+            f = T.concatenate(f, axis=2)
+            feats.append(f)
+            cs.append([c[-1] for c in cs_])
+            ys.append([y_layer[-1] for y_layer in y_layers])
+        inv_idx = T.arange(data.shape[1])[T.concatenate(idxs, axis=0)]
+        cs = [T.concatenate(c,axis=0)[inv_idx] for c in zip(*cs)]
+        ys = [T.concatenate(y,axis=0)[inv_idx] for y in zip(*ys)]
+        feats = T.concatenate(feats, axis=1)[:,inv_idx]
+        f = theano.function([data]+y0+c0, [feats]+ys+cs)
+        def _function(X):
+            k,b = X.shape
+            y0 = [np.zeros((b,m), dtype=theano.config.floatX) for m in self.layers]
+            c0 = [np.zeros((b,m), dtype=theano.config.floatX) for m in self.layers]
+            feats = []
+            for i in xrange(0,k,chunk_size):
+                args = [X[i:i+chunk_size]]+y0+c0
+                res = f(*args)
+                feats.append(res[0])
+                y0 = res[1:n+1]
+                c0 = res[n+1:2*n+1]
+            return np.concatenate(feats, axis=0)
+        return _function
+
+    def _compile_transform(self, dtype, features, devices=[], chunk_size=-1):
         models = self._device_models(devices, copy_shared=True)
         data = T.matrix(dtype=train.dtype)
+        if chunk_size > 0:
+            return _compile_transform_chunks(data, models, chunk_size, features)
         idxs = [T.arange(i, data.shape[1], len(devices)) for i in len(devices)]
         feats = [self._theano_transform(data[:,idx], model, features) for idx,model in zip(idxs,models)]
         feats = T.concatenate(feats, axis=1)
@@ -342,11 +376,13 @@ class CharRNN(object):
         feats = feats[:, inv_idx]
         return theano.function([data], [feats])
 
-    def transform(self, data, features=[-1], devices=[], callback=null_func):
-        f = self._compile_transform(data.dtype, features, devices=devices)
+    def transform(self, data, features=[-1], chunk_size=-1, devices=[], callback=null_func):
+        f = self._compile_transform(data.dtype, features, devices=devices, chunk_size=chunk_size)
         callback(0, 'transform')
         i = 0
         for X in data:
+            if X.ndim < 2:
+                X = np.reshape(X, list(X.shape)+[1])
             Z = f(X)
             i += 1
             p = float(i)/len(data)

@@ -17,8 +17,9 @@ def as_matrix(data):
     return X, mask
 
 class BatchIter(object):
-    def __init__(self, data, size, shuffle=True):
+    def __init__(self, data, size, shuffle=True, mask=True):
         self.data = data
+        self.use_mask = mask
         #self.X, self.mask = as_matrix(data)
         self.size = size
         self.shuffle = shuffle
@@ -43,14 +44,20 @@ class BatchIter(object):
         dtype = self.data[0].dtype
         m = max(len(x) for x in self.data)
         X = np.zeros((m, size), dtype=dtype)
-        mask = np.ones((m, size), dtype=np.int8)
+        if self.use_mask:
+            mask = np.ones((m, size), dtype=np.int8)
         for i in xrange(0, len(self.data), size):
             n = min(len(self.data)-i, size)
             for j in xrange(n):
                 x = self.data[i+j]
                 k = len(x)
                 X[:k,j] = x
-                mask[:k,j] = 1
-                mask[k:,j] = 0
-            yield X[:,:n], mask[:,:n]
+                if self.use_mask:
+                    mask[:k,j] = 1
+                    mask[k:,j] = 0
+            m = max(len(x) for x in self.data[i:i+n])
+            if self.use_mask:
+                yield X[:m,:n], mask[:m,:n]
+            else:
+                yield X[:m,:n]
             #yield self.X[:,i:i+size], self.mask[:,i:i+size]
