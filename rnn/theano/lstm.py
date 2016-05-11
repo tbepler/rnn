@@ -17,8 +17,8 @@ def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmo
     y = o*cact(c)
     if mask is not None:
         mask = mask.dimshuffle(0, 'x')
-        y *= mask
-        c *= mask
+        y = y*mask + y0*(1-mask)
+        c = c*mask + c0*(1-mask)
     return y, c
 
 def split(w):
@@ -28,18 +28,33 @@ def split(w):
 
 def gates(bias, wx, x):
     if 'int' in x.dtype:
-        k,b = x.shape
-        x = x.flatten()
         ifog = wx[x] + bias
     else:
-        k,b,n = x.shape
-        x = x.reshape((k*b,n))
         ifog = th.dot(x, wx) + bias
-    ifog = ifog.reshape((k,b,ifog.shape[1]))
     return ifog
 
 def flatten_left(shape):
     return [shape[0]*shape[1]] + list(shape[2:])
+
+def unfoldl(w, y0, c0, x, steps, mask=None **kwargs):
+    b, wx, wy = split(w)
+    ifog = gates(b, wx, x)
+    if mask is None:
+        def _step(i, yp, cp, g, wy):
+            return step(g, yp, cp, wy, **kwargs)
+        s = T.arange(steps)
+    else:
+        def _step(m, yp, cp, g, wy):
+            return step(g, yp, cp, wy, mask=m, **kwargs)
+        s = mask[:steps]
+    res, _ = theano.scan(_step, [s], outputs_info=[y0, c0], non_sequences=[g,wy])
+    return res
+
+def unfoldr(w, y0, c0, x, steps, mask=None, **kwargs):
+    if mask is not None:
+        mask = mask[::-1]
+    y,c = unfoldl(w, y0, c0, x, steps, mask=mask, **kwargs)
+    return y[::-1], c[::-1]
 
 def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
     b, wx, wy = split(w)
@@ -107,22 +122,18 @@ def scanl(w, y0, c0, x, mask=None, **kwargs):
     return lstm(w, y0, c0, x, mask=mask, op=theano.scan, **kwargs)
 
 def scanr(w, y0, c0, x, mask=None, **kwargs):
+    if mask is not None:
+        mask = mask[::-1]
     y, c = lstm(w, y0, c0, x[::-1], mask=mask, op=theano.scan, **kwargs)
     return y[::-1], c[::-1]
 
-def foldl(w, y0, c0, x, **kwargs):
-    b, wx, wy = split(w)
-    ifog = gates(b, wx, x)
-    f = lambda g, yp, cp, wy: step(g, yp, cp, wy, **kwargs)
-    [y,c], updates = theano.foldl(f, ifog, [y0, c0], non_sequences=wy)
-    return y, c
+def foldl(w, y0, c0, x, mask=None, **kwargs):
+    y, c = scanl(w, y0, c0, x, mask=mask, **kwargs)
+    return y[-1], c[-1]
 
-def foldr(w, y0, c0, x, **kwargs):
-    b, wx, wy = split(w)
-    ifog = gates(b, wx, x)
-    f = lambda g, yp, cp, wy: step(g, yp, cp, wy, **kwargs)
-    [y,c], updates = theano.foldr(f, ifog, [y0, c0], non_sequences=wy)
-    return y, c
+def foldr(w, y0, c0, x, mask=None, **kwargs):
+    y, c = scanr(w, y0, c0, x, mask=mask, **kwargs)
+    return y[0], c[0]
 
 class LSTM(object):
     def __init__(self, ins, units, init=orthogonal, name=None, dtype=theano.config.floatX
@@ -158,22 +169,57 @@ class LSTM(object):
         return foldr(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
+    def unfoldl(self, y0, c0, x, steps, **kwargs):
+        return unfoldl(self.weights, y0, c0, x, steps, iact=self.iact, fact=self.fact, oact=self.oact
+                , gact=self.gact, cact=self.cact, **kwargs)
+
+    def unfoldr(self, y0, c0, x, steps, **kwargs):
+        return unfoldr(self.weights, y0, c0, x, steps, iact=self.iact, fact=self.fact, oact=self.oact
+                , gact=self.gact, cact=self.cact, **kwargs)
+
 class BiLSTM(object):
     def __init__(self, ins, units, **kwargs):
-        self.n = units
-        self.lstml = LSTM(ins, units, **kwargs)
-        self.lstmr = LSTM(ins, units, **kwargs)
+        self.nl = units // 2 + units % 2
+        self.nr = units // 2
+        self.lstml = LSTM(ins, nl, **kwargs)
+        self.lstmr = LSTM(ins, nr, **kwargs)
 
     @property
     def weights(self): return self.lstml.weights + self.lsmtr.weights
 
     def __call__(self, x, mask=None, **kwargs):
+        return self.scan(x, mask=mask, **kwargs)
+
+    def scan(self, x, mask=None, **kwargs):
         b = x.shape[1]
-        y0 = th.zeros((b, self.n))
-        c0 = th.zeros((b, self.n))
+        y0 = th.zeros((b, self.nl))
+        c0 = th.zeros((b, self.nl))
         yl, _ = self.lstml.scanl(y0, c0, x, mask=mask, **kwargs)
+        y0 = th.zeros((b, self.nr))
+        c0 = th.zeros((b, self.nr))
         yr, _ = self.lstmr.scanr(y0, c0, x, mask=mask, **kwargs)
         return th.concatenate([yl, yr], axis=yl.ndim-1)
+    
+    def fold(self, x, mask=None, **kwargs):
+        b = x.shape[1]
+        y0 = th.zeros((b, self.nl))
+        c0 = th.zeros((b, self.nl))
+        yl, _ = self.lstml.foldl(y0, c0, x, mask=mask, **kwargs)
+        y0 = th.zeros((b, self.nr))
+        c0 = th.zeros((b, self.nr))
+        yr, _ = self.lstmr.foldr(y0, c0, x, mask=mask, **kwargs)
+        return th.concatenate([yl, yr], axis=yl.ndim-1)
+
+    def unfold(self, x, steps, **kwargs):
+        b = x.shape[1]
+        y0 = th.zeros((b, self.nl))
+        c0 = th.zeros((b, self.nl))
+        yl, _ = self.lstml.unfoldl(y0, c0, x, steps, **kwargs)
+        y0 = th.zeros((b, self.nr))
+        c0 = th.zeros((b, self.nr))
+        yr, _ = self.lstmr.unfoldr(y0, c0, x, steps, **kwargs)
+        return th.concatenate([yl,yr], axis=yl.ndim-1)
+
 
 
 
