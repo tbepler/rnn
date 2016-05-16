@@ -335,10 +335,10 @@ class CharRNN(object):
         n = self._theano_model.nlayers
         c0 = [T.matrix() for _ in xrange(n)]
         y0 = [T.matrix() for _ in xrange(n)]
-        idxs = [T.arange(i, data.shape[1], len(models)) for i in len(models)]
+        idxs = [T.arange(i, data.shape[1], len(models)) for i in xrange(len(models))]
         feats, cs, ys = [], [], []
         for idx, model in zip(idxs, models):
-            _,y_layers,cs_ = model(data[:,idx], c0=[c[:,idx] for c in c0], y0=[y[:,idx] for y in y0], unroll=self.unroll)
+            _,y_layers,cs_ = model(data[:,idx], c0=[c[idx] for c in c0], y0=[y[idx] for y in y0], unroll=self.unroll)
             f = [y_layers[i] for i in features]
             f = T.concatenate(f, axis=2)
             feats.append(f)
@@ -353,22 +353,20 @@ class CharRNN(object):
             k,b = X.shape
             y0 = [np.zeros((b,m), dtype=theano.config.floatX) for m in self.layers]
             c0 = [np.zeros((b,m), dtype=theano.config.floatX) for m in self.layers]
-            feats = []
             for i in xrange(0,k,chunk_size):
                 args = [X[i:i+chunk_size]]+y0+c0
                 res = f(*args)
-                feats.append(res[0])
+                yield res[0]
                 y0 = res[1:n+1]
                 c0 = res[n+1:2*n+1]
-            return np.concatenate(feats, axis=0)
         return _function
 
     def _compile_transform(self, dtype, features, devices=[], chunk_size=-1):
         models = self._device_models(devices, copy_shared=True)
-        data = T.matrix(dtype=train.dtype)
+        data = T.matrix(dtype=dtype)
         if chunk_size > 0:
-            return _compile_transform_chunks(data, models, chunk_size, features)
-        idxs = [T.arange(i, data.shape[1], len(devices)) for i in len(devices)]
+            return self._compile_transform_chunks(data, models, chunk_size, features)
+        idxs = [T.arange(i, data.shape[1], len(devices)) for i in xrange(len(devices))]
         feats = [self._theano_transform(data[:,idx], model, features) for idx,model in zip(idxs,models)]
         feats = T.concatenate(feats, axis=1)
         idxs = T.concatenate(idxs, axis=0)

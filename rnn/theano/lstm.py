@@ -36,7 +36,7 @@ def gates(bias, wx, x):
 def flatten_left(shape):
     return [shape[0]*shape[1]] + list(shape[2:])
 
-def unfoldl(w, y0, c0, x, steps, mask=None **kwargs):
+def unfoldl(w, y0, c0, x, steps, mask=None, **kwargs):
     b, wx, wy = split(w)
     ifog = gates(b, wx, x)
     if mask is None:
@@ -151,7 +151,7 @@ class LSTM(object):
         self.cact = cact
 
     @property
-    def units(self): return self.weights.shape[1]//4
+    def units(self): return self.weights.get_value().shape[1]//4
 
     def scanl(self, y0, c0, x, mask=None, **kwargs):
         return scanl(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
