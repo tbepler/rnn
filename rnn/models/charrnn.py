@@ -1,16 +1,9 @@
 import theano
 import theano.tensor as T
 import numpy as np
-from collections import OrderedDict
-import math
-import random
 
 import rnn.theano.lstm as lstm
 import rnn.theano.linear as linear
-import rnn.theano.softmax as softmax
-import rnn.theano.crossent as crossent
-
-from rnn.minibatcher import BatchIter
 
 import rnn.theano.solvers as solvers
 
@@ -18,7 +11,7 @@ def null_func(*args, **kwargs):
     pass
 
 class CharRNNGraph(object):
-    def __init__(self, n_in, n_out, layers, decoder=linear.Linear, weights=None):
+    def __init__(self, n_in, n_out, layers, decoder=linear.LinearDecoder, weights=None):
         self.layers = []
         m = n_in
         for n in layers:
@@ -35,13 +28,13 @@ class CharRNNGraph(object):
 
     @property
     def weights(self):
-        return [layer.weights for layer in self.layers] + [self.decoder.weights]
+        return [layer.weights for layer in self.layers] + self.decoder.weights
 
     @weights.setter
     def weights(self, weights):
         for i in xrange(len(self.layers)):
             self.layers[i].weights.set_value(weights[i])
-        self.decoder.weights.set_value(weights[-1])
+        self.decoder.weights = weights[len(self.layers):]
 
     def transfer(self, target, copy_shared=False):
         from copy import copy
@@ -60,7 +53,7 @@ class CharRNNGraph(object):
         cpy.decoder = decoder
         return cpy
 
-    def __call__(self, X, y0=None, c0=None, unroll=-1):
+    def transform(self, X, y0=None, c0=None, features=None, unroll=-1):
         k,b = X.shape
         yh = X
         y_layers = []
@@ -78,16 +71,43 @@ class CharRNNGraph(object):
             yh, c = layer.scanl(y0i, c0i, yh, unroll=unroll)
             y_layers.append(yh)
             cs.append(c)
-        yh = softmax.softmax(self.decoder(yh))
+        feats = y_layers
+        if features is not None:
+            feats = [y_layers[i] for i in features]
+        feats = T.concatenate(feats, axis=-1)
+        return feats, y_layers, cs
+
+    def logprob(self, Y, X, y0=None, c0=None, unroll=-1):
+        k,b = X.shape
+        yh = X
+        y_layers = []
+        cs = []
+        for i in xrange(len(self.layers)):
+            layer = self.layers[i]
+            if y0 is not None:
+                y0i = y0[i]
+            else:
+                y0i = T.zeros((b,layer.units))
+            if c0 is not None:
+                c0i = c0[i]
+            else:
+                c0i = T.zeros((b, layer.units))
+            yh, c = layer.scanl(y0i, c0i, yh, unroll=unroll)
+            y_layers.append(yh)
+            cs.append(c)
+        yh = self.decoder.logprob(Y, yh)
         return yh, y_layers, cs
     
 class CharRNN(object):
-    def __init__(self, n_in, n_out, layers, decoder=linear.Linear, solver=solvers.RMSprop(0.01), unroll=-1):
+    def __init__(self, n_in, n_out, layers, decoder=linear.LinearDecoder, solver=solvers.RMSprop(0.01)
+            , l1_reg=0, cov_reg=0, unroll=-1):
         self.n_in = n_in
         self.n_out = n_out
         self.layers = layers
         self.decoder = decoder
         self.solver = solver
+        self.l1_reg = l1_reg
+        self.cov_reg = cov_reg
         self.unroll = unroll
         self.setup()
 
@@ -107,6 +127,8 @@ class CharRNN(object):
         params['layers'] = self.layers
         params['decoder'] = self.decoder
         params['solver'] = self.solver
+        params['l1_reg'] = self.l1_reg
+        params['cov_reg'] = self.cov_reg
         params['unroll'] = self.unroll
         return params
     
@@ -116,6 +138,8 @@ class CharRNN(object):
         self.layers = params['layers']
         self.decoder = params.get('decoder', linear.Linear)
         self.solver = params.get('solver', solvers.RMSprop(0.01))
+        self.l1_reg = params.get('l1_reg', 0)
+        self.cov_reg = params.get('cov_reg', 0)
         self.unroll = params.get('unroll', -1)
 
     def __getstate__(self):
@@ -136,7 +160,7 @@ class CharRNN(object):
     def _theano_crossent(self, Yh, Y, mask):
         cent = T.zeros_like(Yh)
         i,j = T.mgrid[0:cent.shape[0], 0:cent.shape[1]]
-        cent = T.set_subtensor(cent[i,j,Y], -T.log(Yh[i,j,Y])*mask)
+        cent = T.set_subtensor(cent[i,j,Y], -Yh[i,j,Y]*mask)
         return cent
 
     def _theano_confusion(self, Yh, Y, mask):
@@ -157,7 +181,7 @@ class CharRNN(object):
             X = args[2*n][i:i+chunk_size]
             Y = args[2*n+1][i:i+chunk_size]
             mask = args[2*n+2][i:i+chunk_size]
-            Yh, y_layers, cs = model(X, c0=c0, y0=y0, unroll=self.unroll)
+            Yh, y_layers, cs = model.logprob(Y, X, c0=c0, y0=y0, unroll=self.unroll)
             cent = cent0 + T.sum(self._theano_crossent(Yh, Y, mask), axis=axis)
             conf = conf0 + T.sum(self._theano_confusion(Yh, Y, mask), axis=axis)
             ys = [y_layer[-1] for y_layer in y_layers] 
@@ -192,7 +216,7 @@ class CharRNN(object):
                 cents.append(cent)
                 confs.append(conf)
         else:
-            Yhs = [model(X[:,idx], unroll=self.unroll)[0] for model,idx in zip(models, idxs)]
+            Yhs = [model.logprob(Y[:,idx], X[:,idx], unroll=self.unroll)[0] for model,idx in zip(models, idxs)]
             cents = [T.sum(self._theano_crossent(Yh, Yi, maski), axis=axis_conf) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
             confs = [T.sum(self._theano_confusion(Yh, Yi, maski), axis=axis_conf) for Yh,Yi,maski in zip(Yhs, Ys, masks)]
         if axis == 0:
@@ -241,6 +265,24 @@ class CharRNN(object):
             callback(p, 'loss')
         return cent, conf
 
+    def _theano_training_loss(self, Yh, Y, mask, activations):
+        loss = T.sum(self._theano_crossent(Yh, Y, mask))
+        #impose an l1 penalty on the activations
+        if self.l1_reg > 0:
+            loss += sum(T.sum(abs(act*T.shape_padright(mask))*self.l1_reg) for act in activations)
+        if self.cov_reg > 0:
+            #only impose covariance regularizer on the top level activations
+            n = T.sum(mask)
+            act = activations[-1][mask.nonzero()]
+            #act = act.reshape((act.shape[0]*act.shape[1], act.shape[2]))
+            act = act/T.sqrt(T.sum(act**2, axis=0, keepdims=True))
+            cov = T.dot(act.T, act)
+            m = cov.shape[0]
+            i = T.arange(m)
+            cov = T.set_subtensor(cov[i,i], 0)
+            loss += self.cov_reg*n*cov.norm(1)/(m*(m-1))
+        return loss
+
     def _theano_gradient_truncated(self, X, Y, mask, model, backprop):
         n = model.nlayers
         def step(i, *args):
@@ -253,8 +295,8 @@ class CharRNN(object):
             X = args[2*n]
             Y = args[2*n+1]
             mask = args[2*n+2]
-            Yh,y_layers,cs = model(X[i:i+backprop], y0=y0, c0=c0, unroll=self.unroll)
-            loss = T.sum(self._theano_crossent(Yh, Y[i:i+backprop], mask[i:i+backprop]))
+            Yh,y_layers,cs = model.logprob(Y[i:i+backprop], X[i:i+backprop], y0=y0, c0=c0, unroll=self.unroll)
+            loss = self._theano_training_loss(Yh, Y[i:i+backprop], mask[i:i+backprop], y_layers)
             constants = list(y0) + list(c0) + [i]
             gw = theano.grad(loss, model.weights, consider_constant=constants)
             gw = [gwi+gw0i for gwi,gw0i in zip(gw, gw0)]
@@ -288,8 +330,8 @@ class CharRNN(object):
                 gw, loss, confusion = self._theano_gradient_truncated(X[:,idx], Y[:,idx], mask[:,idx], models[i], truncated_backprop)
             else:
                 model = models[i]
-                Yh,_,_ = model(X[:,idx], unroll=self.unroll)
-                loss = T.sum(self._theano_crossent(Yh, Y[:,idx], mask[:,idx]))
+                Yh,y_layers,_ = model.logprob(Y[:,idx], X[:,idx], unroll=self.unroll)
+                loss = self._theano_training_loss(Yh, Y[:,idx], mask[:,idx], y_layers)
                 gw = theano.grad(loss, model.weights)
                 confusion = T.sum(self._theano_confusion(Yh, Y[:,idx], mask[:,idx]), axis=[0,1])
                 loss = T.sum(self._theano_crossent(Yh, Y[:,idx], mask[:,idx]), axis=[0,1])
@@ -326,9 +368,7 @@ class CharRNN(object):
             callback(it%1, 'fit')
     
     def _theano_transform(self, X, model, features):
-        _,y_layers,_ = model(X, unroll=self.unroll)
-        feats = [y_layers[i] for i in features]
-        feats = T.concatenate(feats, axis=2)
+        feats,_,_ = model.transform(X, features=features, unroll=self.unroll)
         return feats
 
     def _compile_transform_chunks(self, data, models, chunk_size, features):
@@ -338,9 +378,8 @@ class CharRNN(object):
         idxs = [T.arange(i, data.shape[1], len(models)) for i in xrange(len(models))]
         feats, cs, ys = [], [], []
         for idx, model in zip(idxs, models):
-            _,y_layers,cs_ = model(data[:,idx], c0=[c[idx] for c in c0], y0=[y[idx] for y in y0], unroll=self.unroll)
-            f = [y_layers[i] for i in features]
-            f = T.concatenate(f, axis=2)
+            f,y_layers,cs_ = model.transform(data[:,idx], c0=[c[idx] for c in c0], y0=[y[idx] for y in y0]
+                    , unroll=self.unroll, features=features)
             feats.append(f)
             cs.append([c[-1] for c in cs_])
             ys.append([y_layer[-1] for y_layer in y_layers])
