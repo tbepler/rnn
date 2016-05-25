@@ -143,7 +143,12 @@ class LSTM(object):
         w[0] = 0
         w[0,units:2*units] = forget_bias
         init(w[1:])
-        self.weights = theano.shared(w, name=name)
+        self.ws = theano.shared(w, name=name, borrow=True)
+        #self.c0 = theano.shared(np.zeros(units,dtype=dtype),borrow=True)
+        self.c0 = th.zeros((1,units))
+        #self.y0 = theano.shared(np.zeros(units,dtype=dtype),borrow=True)
+        self.y0 = th.zeros((1,units))
+        self.name = name
         self.iact = iact
         self.fact = fact
         self.oact = oact
@@ -151,33 +156,125 @@ class LSTM(object):
         self.cact = cact
 
     @property
-    def units(self): return self.weights.get_value().shape[1]//4
+    def weights(self): return [self.ws]
 
-    def scanl(self, y0, c0, x, mask=None, **kwargs):
+    @property
+    def units(self): return self.ws.get_value(borrow=True).shape[1]//4
+
+    def __getstate__(self):
+        state = {}
+        state['name'] = self.name
+        state['weights'] = self.ws.get_value(borrow=True)
+        #state['c0'] = self.c0.get_value(borrow=True)
+        #state['y0'] = self.y0.get_value(borrow=True)
+        state['activations'] = [self.iact, self.fact, self.oact, self.gact, self.cact]
+        return state
+
+    def __setstate__(self, state):
+        self.name = state['name']
+        self.ws = theano.shared(state['weights'], borrow=True)
+        #self.c0 = theano.shared(state['c0'], borrow=True)
+        self.c0 = th.zeros((1,state['weights'].shape[1]//4))
+        #self.y0 = theano.shared(state['y0'], borrow=True)
+        self.y0 = th.zeros((1,state['weights'].shape[1]//4))
+        acts = state['activations']
+        self.iact = acts[0]
+        self.fact = acts[1]
+        self.oact = acts[2]
+        self.gact = acts[3]
+        self.cact = acts[4]
+
+    def scanl(self, x, y0=None, c0=None, mask=None, **kwargs):
+        if y0 is None:
+            #y0 = self.cact(self.y0)
+            y0 = self.y0
+        if c0 is None:
+            c0 = self.c0
         return scanl(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
-    def scanr(self, y0, c0, x, mask=None, **kwargs):
+    def scanr(self, x, y0=None, c0=None, mask=None, **kwargs):
+        if y0 is None:
+            #y0 = self.cact(self.y0)
+            y0 = self.y0
+        if c0 is None:
+            c0 = self.c0
         return scanr(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
-    def foldl(self, y0, c0, x, mask=None, **kwargs):
+    def foldl(self, x, y0=None, c0=None, mask=None, **kwargs):
+        if y0 is None:
+            #y0 = self.cact(self.y0)
+            y0 = self.y0
+        if c0 is None:
+            c0 = self.c0
         return foldl(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
-    def foldr(self, y0, c0, x, mask=None, **kwargs):
+    def foldr(self, x, y0=None, c0=None, mask=None, **kwargs):
+        if y0 is None:
+            #y0 = self.cact(self.y0)
+            y0 = self.y0
+        if c0 is None:
+            c0 = self.c0
         return foldr(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
-    def unfoldl(self, y0, c0, x, steps, **kwargs):
+    def unfoldl(self, x, steps, y0=None, c0=None, **kwargs):
+        if y0 is None:
+            #y0 = self.cact(self.y0)
+            y0 = self.y0
+        if c0 is None:
+            c0 = self.c0
         return unfoldl(self.weights, y0, c0, x, steps, iact=self.iact, fact=self.fact, oact=self.oact
                 , gact=self.gact, cact=self.cact, **kwargs)
 
-    def unfoldr(self, y0, c0, x, steps, **kwargs):
+    def unfoldr(self, x, steps, y0=None, c0=None, **kwargs):
+        if y0 is None:
+            #y0 = self.cact(self.y0)
+            y0 = self.y0
+        if c0 is None:
+            c0 = self.c0
         return unfoldr(self.weights, y0, c0, x, steps, iact=self.iact, fact=self.fact, oact=self.oact
                 , gact=self.gact, cact=self.cact, **kwargs)
 
-class BiLSTM(object):
+class LayeredLSTM(object):
+    def __init__(self, ins, layers, **kwargs):
+        self.lstms = []
+        for n in layers:
+            self.lstms.append(LSTM(ins, n, **kwargs))
+            ins = n
+
+    @property
+    def units(self):
+        return sum(lstm.units for lstm in self.lstms)
+
+    def split(self, vector):
+        if vector is not None:
+            splits = []
+            i = 0
+            for lstm in lstms:
+                n = lstm.units
+                splits.append(vector[:,i:i+n])
+                i += n
+            return splits
+        else:
+            return [None for _ in self.lstms]
+
+    def scanl(self, x, y0=None, c0=None, mask=None, **kwargs):
+        y0, c0 = self.split(y0), self.split(c0)
+        ys, cs = [], []
+        for i in xrange(len(self.lstms)):
+            lstm = self.lstms[i]
+            y, c = lstm.scanl(x, y0=y0[i], c0=c0[i], mask=mask, **kwargs)
+            ys.append(y[-1])
+            cs.append(c[-1])
+            x = y
+        ys = T.concatenate(ys, axis=-1)
+        cs = T.concatenate(cs, axis=-1)
+        return y, ys, cs
+
+class BLSTM(object):
     def __init__(self, ins, units, **kwargs):
         self.nl = units // 2 + units % 2
         self.nr = units // 2
@@ -187,40 +284,55 @@ class BiLSTM(object):
     @property
     def weights(self): return self.lstml.weights + self.lsmtr.weights
 
+    @property
+    def units(self): return self.nl + self.nr
+
     def __call__(self, x, mask=None, **kwargs):
         return self.scan(x, mask=mask, **kwargs)
 
     def scan(self, x, mask=None, **kwargs):
-        b = x.shape[1]
-        y0 = th.zeros((b, self.nl))
-        c0 = th.zeros((b, self.nl))
-        yl, _ = self.lstml.scanl(y0, c0, x, mask=mask, **kwargs)
-        y0 = th.zeros((b, self.nr))
-        c0 = th.zeros((b, self.nr))
-        yr, _ = self.lstmr.scanr(y0, c0, x, mask=mask, **kwargs)
+        yl, _ = self.lstml.scanl(x, mask=mask, **kwargs)
+        yr, _ = self.lstmr.scanr(x, mask=mask, **kwargs)
         return th.concatenate([yl, yr], axis=yl.ndim-1)
     
     def fold(self, x, mask=None, **kwargs):
-        b = x.shape[1]
-        y0 = th.zeros((b, self.nl))
-        c0 = th.zeros((b, self.nl))
-        yl, _ = self.lstml.foldl(y0, c0, x, mask=mask, **kwargs)
-        y0 = th.zeros((b, self.nr))
-        c0 = th.zeros((b, self.nr))
-        yr, _ = self.lstmr.foldr(y0, c0, x, mask=mask, **kwargs)
+        yl, _ = self.lstml.foldl(x, mask=mask, **kwargs)
+        yr, _ = self.lstmr.foldr(x, mask=mask, **kwargs)
         return th.concatenate([yl, yr], axis=yl.ndim-1)
 
     def unfold(self, x, steps, **kwargs):
-        b = x.shape[1]
-        y0 = th.zeros((b, self.nl))
-        c0 = th.zeros((b, self.nl))
-        yl, _ = self.lstml.unfoldl(y0, c0, x, steps, **kwargs)
-        y0 = th.zeros((b, self.nr))
-        c0 = th.zeros((b, self.nr))
-        yr, _ = self.lstmr.unfoldr(y0, c0, x, steps, **kwargs)
+        yl, _ = self.lstml.unfoldl(x, steps, **kwargs)
+        yr, _ = self.lstmr.unfoldr(x, steps, **kwargs)
         return th.concatenate([yl,yr], axis=yl.ndim-1)
 
+class LayeredBLSTM(object):
+    def __init__(self, ins, layers, **kwargs):
+        self.blstms = []
+        for n in layers:
+            self.blstms.append(BLSTM(ins, n, **kwargs))
+            ins = n
 
+    @property
+    def weights(self): return sum(blstm.weights for blstm in self.blstms)
+
+    @property
+    def units(self): return sum(blstm.units for blstm in self.blstms)
+
+    def scan(self, x, mask=None, **kwargs):
+        for blstm in self.blstms:
+            x = blstm.scan(x, mask=mask, **kwargs)
+        return x
+
+    def fold(self, x, mask=None, **kwargs):
+        for blstm in self.blstms[:-1]:
+            x = blstm.scan(x, mask=mask, **kwargs)
+        return blstms[-1].fold(x, mask=mask, **kwargs)
+
+    def unfold(self, x, steps, **kwargs):
+        x = blstms[0].unfold(x, steps, **kwargs)
+        for blstm in self.blstms[1:]:
+            x = blstm.scan(x, **kwargs)
+        return x
 
 
 

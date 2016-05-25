@@ -26,6 +26,8 @@ class BatchIter(object):
 
     @property
     def dtype(self):
+        if type(self,data[0]) is tuple:
+            return self.data[0][0].dtype
         return self.data[0].dtype
 
     def __len__(self):
@@ -41,21 +43,27 @@ class BatchIter(object):
             #np.random.shuffle(self.mask.T)
             random.shuffle(self.data)
         size = self.size
-        dtype = self.data[0].dtype
-        m = max(len(x) for x in self.data)
+        masks = None
+        if mask and type(self.data[0]) is tuple:
+            data, masks = zip(*self.data)
+        dtype = data[0].dtype
+        m = max(len(x) for x in data)
         X = np.zeros((m, size), dtype=dtype)
         if self.use_mask:
             mask = np.ones((m, size), dtype=np.int8)
-        for i in xrange(0, len(self.data), size):
-            n = min(len(self.data)-i, size)
+        for i in xrange(0, len(data), size):
+            n = min(len(data)-i, size)
             for j in xrange(n):
-                x = self.data[i+j]
+                x = data[i+j]
                 k = len(x)
                 X[:k,j] = x
                 if self.use_mask:
-                    mask[:k,j] = 1
+                    if masks is not None:
+                        mask[:k,j] = masks[i+j]
+                    else:
+                        mask[:k,j] = 1
                     mask[k:,j] = 0
-            m = max(len(x) for x in self.data[i:i+n])
+            m = max(len(x) for x in data[i:i+n])
             if self.use_mask:
                 yield X[:m,:n], mask[:m,:n]
             else:
