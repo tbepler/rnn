@@ -2,92 +2,62 @@
 import theano
 import theano.tensor as T
 
-import rnn.theano.lstm as lstm
-import rnn.theano.crf as crf
-import rnn.theano.linear as linear
-import rnn.theano.softmax as softmax
-import rnn.theano.crossent as crossent
-
-class Encoder(object):
-    def __init__(self, n_in, dims, layers):
-        self.layers = []
-        m = n_in
-        for n in layers:
-            L = lstm.BiLSTM(m, n)
-            self.layers.append(L)
-            m = n
-        self.decoder = lstm.BiLSTM(m, dims)
+class NullNoise(object):
+    def __call__(self, x, **kwargs):
+        return x
 
     @property
     def weights(self):
-        return [layer.weights for layer in self.layers] + [self.decoder.weights]
+        return []
 
-    @weights.setter
-    def weights(self, weights):
-        for i in xrange(len(self.layers)):
-            self.layers[i].weights.set_value(weights[i])
-        self.decoder.weights.set_value(weights[-1])
+class UniformNoise(self):
+    def __init__(self, dim, p=0.25, seed=None):
+        self.dim = dim
+        self.p = p
+        self.seed = seed
 
-    def __call__(self, X, mask=None):
-        for L in self.layers:
-            X = L.scan(X, mask=mask)[0]
-        return self.decoder.fold(X, mask=mask)[0]
-
-class Decoder(object):
-    def __init__(self, dims, n_out, layers=[]):
-        if len(layers) == 0:
-            layers = [2*n_out]
-        self.layers = []
-        m = dims
-        for n in layers:
-            L = lstmBiLSTM(m, n)
-            self.layers.append(L)
-            m = n
-        self.decoder = crf.CRF(m, n_out)
+    def __call__(self, x, **kwargs):
+        if self.p > 0:
+            from theano.tensor.shared_randomstreams import RandomStreams
+            if x.dtype.startswith('int'):
+                #make one hot version of x
+                shape = list(x.shape)+[self.dim]
+                mesh = T.mgrid[0:x.shape[0],0:x.shape[1]]
+                i,j = mesh[0], mesh[1]
+                x_one_hot = T.set_subtensor(T.zeros(shape)[i,j,x], 1)
+                x = x_one_hot
+            rng = RandomStreams(seed=seed)
+            I = rng.uniform((x.shape[0],x.shape[1])) < p
+            x = T.set_subtensor(x[I], 1.0/self.dim)
+        return x
 
     @property
     def weights(self):
-        return [layer.weights for layer in self.layers] + self.decoder.weights
-
-    @weights.setter
-    def weights(self, ws):
-        for i in xrange(len(self.layers)):
-            self.layers[i].weights.set_value(ws[i])
-        self.decoder.weights = ws[-1]
-        
-    def logprob(self, X, Y, mask=None):
-        n = Y.shape[0]
-        X = self.layers[0].unfold(X, n, mask=mask)[0]
-        for L in self.layers[1:]:
-            X = L.scan(X, mask=mask)[0]
-        return self.decoder.logprob(Y, X, mask=mask)
+        return []
 
 class Autoencoder(object):
-    def __init__(self, n_in, dims, layers, encoder=None, decoder=None):
-        if encoder is None:
-            encoder = Encoder(n_in, dims, layers)
-        if decoder is None:
-            decoder = Decoder(dims, n_in)
+    def __init__(self, encoder, decoder, noise=NullNoise()):
         self.encoder = encoder
         self.decoder = decoder
+        self.noise = noise
 
     @property
     def weights(self):
-        return self.encoder.weights + self.decoder.weights
+        return self.encoder.weights + self.decoder.weights + self.noise.weights
 
-    @weights.setter
-    def weights(self, weights):
-        n = len(self.encoder.weights)
-        self.encoder.weights = weights[:n]
-        self.decoder.weights = weights[n:]
+    def loss(self, X, mask, **kwargs):
+        X_err = self.noise(X, mask=mask)
+        Z = self.encoder(X_err, mask=mask, **kwargs)
+        return self.decoder.loss(Z, X, mask=mask, **kwargs)
 
-    def transform(self, X, mask=None):
+    def gradient(self, X, mask, **kwargs):
+        res = self.loss(X, mask, **kwargs)
+        L = T.sum(res[0])
+        res = [T.sum(r, axis=[0,1]) for r in res]
+        return theano.grad(L, self.weights), res 
+
+    def transform(self, X, mask):
         return self.encoder(X, mask=mask)
-
-    def loss(self, X, mask=None):
-        Z = self.transform(X, mask=mask)
-        return -self.decoder.logprob(Z, X, mask=mask)
-
 
 
 

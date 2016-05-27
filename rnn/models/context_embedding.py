@@ -33,7 +33,7 @@ class ContextEmbedding(object):
 
     def theano_setup(self):
         self.theano = object()
-        self.theano.X = T.matrix()
+        self.theano.X = T.matrix(dtype='int8')
         self.theano.mask = T.matrix(dtype='int8')
 
     def split(self, data, length=None, flank=None, keep_index=True):

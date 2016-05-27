@@ -3,17 +3,14 @@ import theano.tensor as T
 
 from rnn.initializers import orthogonal
 
-def softmax(x):
-    ma = T.max(x, axis=x.ndim-1, keepdims=True)
-    y = x - ma
-    denom = ma + T.log(th.sum(th.exp(y), axis=x.ndim-1, keepdims=True))
-    return th.exp(x - denom)
+def softmax(x, axis=-1):
+    return th.exp(logsoftmax(x, axis=axis))
 
 def logsoftmax(x, axis=-1):
-    return x - logsumexp(x, axis=axis)
+    return x - logsumexp(x, axis=axis, keepdims=True)
 
-def logsumexp(X, axis=None):
-    x_max = T.max(X, axis=axis, keepdims=True)
-    return T.log(T.sum(T.exp(X-x_max), axis=axis, keepdims=True)) + x_max
+def logsumexp(X, axis=None, keepdims=False):
+    x_max = T.max(X, axis=axis, keepdims=keepdims)
+    return T.log(T.sum(T.exp(X-x_max), axis=axis, keepdims=keepdims)) + x_max
 
 
