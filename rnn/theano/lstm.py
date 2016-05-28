@@ -6,7 +6,7 @@ from activation import fast_tanh, fast_sigmoid
 from rnn.initializers import orthogonal
 
 def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmoid, gact=fast_tanh
-         , cact=fast_tanh, mask=None):
+        , cact=fast_tanh, mask=None, activation=lambda x: x):
     m = y0.shape[1]
     ifog = ifog + th.dot(y0, wy)
     i = iact(ifog[:,:m])
@@ -14,7 +14,7 @@ def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmo
     o = oact(ifog[:,2*m:3*m])
     g = gact(ifog[:,3*m:])
     c = c0*f + i*g
-    y = o*cact(c)
+    y = activation(o*cact(c))
     if mask is not None:
         mask = mask.dimshuffle(0, 'x')
         y = y*mask + y0*(1-mask)
@@ -187,19 +187,19 @@ class LSTM(object):
     def scanl(self, x, y0=None, c0=None, mask=None, **kwargs):
         if y0 is None:
             #y0 = self.cact(self.y0)
-            y0 = self.y0
+            y0 = th.ones((x.shape[1],1))*self.y0
         if c0 is None:
-            c0 = self.c0
-        return scanl(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
+            c0 = th.ones((x.shape[1],1))*self.c0
+        return scanl(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
     def scanr(self, x, y0=None, c0=None, mask=None, **kwargs):
         if y0 is None:
             #y0 = self.cact(self.y0)
-            y0 = self.y0
+            y0 = th.ones((x.shape[1],1))*self.y0
         if c0 is None:
-            c0 = self.c0
-        return scanr(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
+            c0 = th.ones((x.shape[1],1))*self.c0
+        return scanr(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
     def foldl(self, x, y0=None, c0=None, mask=None, **kwargs):
@@ -208,7 +208,7 @@ class LSTM(object):
             y0 = self.y0
         if c0 is None:
             c0 = self.c0
-        return foldl(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
+        return foldl(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
     def foldr(self, x, y0=None, c0=None, mask=None, **kwargs):
@@ -217,7 +217,7 @@ class LSTM(object):
             y0 = self.y0
         if c0 is None:
             c0 = self.c0
-        return foldr(self.weights, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
+        return foldr(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
     def unfoldl(self, x, steps, y0=None, c0=None, **kwargs):
@@ -226,7 +226,7 @@ class LSTM(object):
             y0 = self.y0
         if c0 is None:
             c0 = self.c0
-        return unfoldl(self.weights, y0, c0, x, steps, iact=self.iact, fact=self.fact, oact=self.oact
+        return unfoldl(self.ws, y0, c0, x, steps, iact=self.iact, fact=self.fact, oact=self.oact
                 , gact=self.gact, cact=self.cact, **kwargs)
 
     def unfoldr(self, x, steps, y0=None, c0=None, **kwargs):
@@ -235,7 +235,7 @@ class LSTM(object):
             y0 = self.y0
         if c0 is None:
             c0 = self.c0
-        return unfoldr(self.weights, y0, c0, x, steps, iact=self.iact, fact=self.fact, oact=self.oact
+        return unfoldr(self.ws, y0, c0, x, steps, iact=self.iact, fact=self.fact, oact=self.oact
                 , gact=self.gact, cact=self.cact, **kwargs)
 
 class LayeredLSTM(object):

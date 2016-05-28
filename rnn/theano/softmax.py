@@ -4,7 +4,7 @@ import theano.tensor as T
 from rnn.initializers import orthogonal
 
 def softmax(x, axis=-1):
-    return th.exp(logsoftmax(x, axis=axis))
+    return T.exp(logsoftmax(x, axis=axis))
 
 def logsoftmax(x, axis=-1):
     return x - logsumexp(x, axis=axis, keepdims=True)

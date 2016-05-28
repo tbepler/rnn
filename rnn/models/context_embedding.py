@@ -14,7 +14,6 @@ class ContextEmbedding(object):
         self.batch_size = batch_size
         self.length = length
         self.flank = flank
-        self.theano_setup()
 
     def __getstate__(self):
         state = {}
@@ -31,10 +30,8 @@ class ContextEmbedding(object):
                 , length=state['length']
                 , flank=state['flank'])
 
-    def theano_setup(self):
-        self.theano = object()
-        self.theano.X = T.matrix(dtype='int8')
-        self.theano.mask = T.matrix(dtype='int8')
+    def _theano_mask(self):
+        return T.matrix(dtype='int8')
 
     def split(self, data, length=None, flank=None, keep_index=True):
         if length is None:
@@ -55,8 +52,8 @@ class ContextEmbedding(object):
                 m = length + 2*flank
                 for i in xrange(0, n, length):
                     start = i
-                    len = min(n-i, length)
-                    idx = (index, start, len)
+                    l = min(n-i, length)
+                    idx = (index, start, l)
                     if mask is not None and keep_index:
                         yield idx, x[i:i+m], mask[i:i+m]
                     elif mask is not None and not keep_index:
@@ -107,19 +104,21 @@ class ContextEmbedding(object):
         if len(xs) > 0:
             yield self.make_minibatch(xs)
 
-    def _compile_loss_minibatch(self):
+    def _compile_loss_minibatch(self, dtype):
         if not hasattr(self, 'loss_minibatch'):
             flank = T.iscalar()
-            X = self.theano.X
-            mask = self.theano.mask
+            X = T.matrix(dtype=dtype)
+            mask = self._theano_mask()
             n = X.shape[0]
             res = self.encoder.loss(X, mask)
-            if flank > 0:
-                res = [r[flank:n-flank] for r in res]
+            res = [r[flank:n-flank] for r in res]
             res = [T.sum(r, axis=0) for r in res]
-            self.loss_minibatch = theano.function([X, mask, flank], res)  
+            return theano.function([X, mask, flank], res)  
+        else:
+            return self.loss_minibatch
 
     def loss_iter(self, data, callback=null_func):
+        loss_minibatch = self._compile_loss_minibatch(dtype=data[0].dtype)
         total = 0
         if hasattr(data, '__len__'):
             total = sum(len(x) for x in data)
@@ -128,7 +127,7 @@ class ContextEmbedding(object):
         i = 0
         L = None
         for index, X, M in self.minibatched(self.split(data)):
-            res = self.loss_minibatch(X, M, self.flank)
+            res = loss_minibatch(X, M, self.flank)
             if L is None:
                 L = [0 for _ in res]
             for j in xrange(len(index)):
@@ -143,6 +142,7 @@ class ContextEmbedding(object):
         yield L
 
     def loss_accum(self, data, callback=null_func):
+        loss_minibatch = self._compile_loss_minibatch(dtype=data[0].dtype)
         total = 0
         if hasattr(data, '__len__'):
             total = sum(len(x) for x in data)
@@ -151,7 +151,7 @@ class ContextEmbedding(object):
         i = 0
         L = None
         for index, X, M in self.minibatched(self.split(data)):
-            res = self.loss_minibatch(X, M, self.flank)
+            res = loss_minibatch(X, M, self.flank)
             if L is None:
                 L = [0 for _ in res]
             for i in xrange(len(res)):
@@ -161,18 +161,20 @@ class ContextEmbedding(object):
                 callback(float(n)/total, 'loss')
         return L
 
-    def loss(self, data, callback=null_func, axis=None):
+    def loss(self, data, callback=null_func, axis=None, **kwargs):
         if axis == 0:
             return self.loss_iter(data, callback=callback)
         else:
             return self.loss_accum(data, callback=callback)
 
     def fit_steps(self, minibatches, max_iters=100):
-        gws, res = self.encoder.gradient(self.theano.X, self.theano.mask, flank=self.flank)
+        X = T.matrix(dtype=minibatches.dtype)
+        mask = self._theano_mask()
+        gws, res = self.encoder.gradient(X, mask, flank=self.flank)
         weights = self.encoder.weights
-        return self.solver(minibatches, [self.theano.X, self.theano.mask], res, weights, grads=gws, max_iters=max_iters)        
+        return self.optimizer(minibatches, [X, mask], res, weights, grads=gws, max_iters=max_iters)        
 
-    def fit(self, train, validate=None, max_iters=100, callback=null_func):
+    def fit(self, train, validate=None, max_iters=100, callback=null_func, **kwargs):
         from rnn.minibatcher import BatchIter
         train_data = list(self.split(train, keep_index=False))
         train_minibatches = BatchIter(train_data, self.batch_size)
@@ -194,26 +196,28 @@ class ContextEmbedding(object):
                     train_res[i] = 0
             callback(it%1, 'fit')
 
-    def _compile_transform_minibatch(self):
+    def _compile_transform_minibatch(self, dtype):
         if not hasattr(self, 'transform_minibatch'):
             flank = T.iscalar()
-            X = self.theano.X
-            mask = self.theano.mask
+            X = T.matrix(dtype=dtype)
+            mask = self._theano_mask()
             n = X.shape[0]
             Z = self.encoder.transform(X, mask)
             if flank > 0:
                 Z = Z[flank:n-flank]
-            self.transform_minibatch = theano.function([X, mask, flank], Z)  
+            return theano.function([X, mask, flank], Z)  
+        else:
+            return self.transform_minibatch
 
-    def transform(self, data, callback=null_func):
-        self._compile_transform_minibatch()
+    def transform(self, data, callback=null_func, **kwargs):
+        transform_minibatch = self._compile_transform_minibatch(data[0].dtype)
         total = 0
         if hasattr(data, '__len__'):
             total = sum(len(x) for x in data)
             callback(0, 'transform')
         n = 0
         for index,X,M in self.minibatched(self.split(data)):
-            Z = self.transform_minibatch(X, M, self.flank)
+            Z = transform_minibatch(X, M, self.flank)
             n += sum(idx[2] for idx in index)
             yield index, Z
             if total > 0:

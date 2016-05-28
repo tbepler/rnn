@@ -10,7 +10,7 @@ class NullNoise(object):
     def weights(self):
         return []
 
-class UniformNoise(self):
+class UniformNoise(object):
     def __init__(self, dim, p=0.25, seed=None):
         self.dim = dim
         self.p = p

@@ -26,7 +26,7 @@ class BatchIter(object):
 
     @property
     def dtype(self):
-        if type(self,data[0]) is tuple:
+        if type(self.data[0]) is tuple:
             return self.data[0][0].dtype
         return self.data[0].dtype
 
@@ -44,7 +44,7 @@ class BatchIter(object):
             random.shuffle(self.data)
         size = self.size
         masks = None
-        if mask and type(self.data[0]) is tuple:
+        if self.use_mask and type(self.data[0]) is tuple:
             data, masks = zip(*self.data)
         dtype = data[0].dtype
         m = max(len(x) for x in data)
