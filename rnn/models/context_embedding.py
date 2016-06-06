@@ -25,10 +25,11 @@ class ContextEmbedding(object):
         return state
 
     def __setstate__(self, state):
-        self.__init__(state['encoder'], optimizer=state['optimizer']
-                , batch_size=state['batch_size']
-                , length=state['length']
-                , flank=state['flank'])
+        self.encoder = state['encoder']
+        self.optimizer = state['optimizer']
+        self.batch_size = state['batch_size']
+        self.length = state['length']
+        self.flank = state['flank']
 
     def _theano_mask(self):
         return T.matrix(dtype='int8')
@@ -203,8 +204,7 @@ class ContextEmbedding(object):
             mask = self._theano_mask()
             n = X.shape[0]
             Z = self.encoder.transform(X, mask)
-            if flank > 0:
-                Z = Z[flank:n-flank]
+            Z = Z[flank:n-flank]
             return theano.function([X, mask, flank], Z)  
         else:
             return self.transform_minibatch
