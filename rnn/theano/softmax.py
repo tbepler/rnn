@@ -11,6 +11,7 @@ def logsoftmax(x, axis=-1):
 
 def logsumexp(X, axis=None, keepdims=False):
     x_max = T.max(X, axis=axis, keepdims=keepdims)
-    return T.log(T.sum(T.exp(X-x_max), axis=axis, keepdims=keepdims)) + x_max
+    X = X - T.max(X, axis=axis, keepdims=True)
+    return T.log(T.sum(T.exp(X), axis=axis, keepdims=keepdims)) + x_max
 
 
