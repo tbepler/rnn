@@ -2,7 +2,7 @@ import theano
 import theano.tensor as T
 import numpy as np
 
-from lstm import LSTM
+from lstm import LSTM, LayeredLSTM
 from linear import Linear
 from softmax import logsoftmax, softmax, logsumexp
 from loss import cross_entropy, confusion
@@ -74,34 +74,47 @@ class Emmission(object):
         self.w = theano.shared(state['w'], borrow=True)
 
     def __call__(self, X):
-        L = logsumexp(T.shape_padright(X) + logsoftmax(self.w), axis=-2)
-        return logsoftmax(L)
+        return logsoftmax(T.dot(X, self.w), axis=-1)
+        #L = T.shape_padright(T.log(X)) + logsoftmax(self.w)
+        #L = logsumexp(L, axis=-2)
+        #return logsoftmax(L, axis=-1)
+        #L = T.dot(X, softmax(self.w))
+        #L = L/L.sum(axis=-1, keepdims=True)
+        #return T.log(L)
+
+def ident(x):
+    return x
 
 class TopicLSTM(object):
-    def __init__(self, n_in, units, n_topics, sparsity=0, noise=NullNoise(), trans_weight=1.0):
-        self.forward = LSTM(n_in, units)
-        self.backward = LSTM(units, n_topics)
-        self.linear = Linear(n_topics, n_topics)
-        self.trans = DirichletTransition(n_topics)
-        self.emit = Emmission(n_topics, n_in)
+    def __init__(self, n_in, units, sparsity=0):
+        self.forward = LayeredLSTM(n_in, units
+                , cact=ident
+                )
+        self.backward = LayeredLSTM(n_in, units
+                , cact=ident
+                )
+        self.emit = Emmission(units[-1], n_in)
         self.sparsity = sparsity
-        self.noise = noise
-        self.n_topics = n_topics
         self.n_in = n_in
-        self.trans_weight = trans_weight
 
     @property
     def weights(self):
-        return self.forward.weights + self.backward.weights + self.trans.weights + self.emit.weights
+        return self.forward.weights + self.backward.weights
+
+    def fuse(self, x, y):
+        return (x+y)/2.0
 
     def transform(self, X, mask=None):
-        Z_f, _ = self.forward.scanl(X, mask=mask)
-        Z, _ = self.backward.scanr(Z_f, mask=mask) #, activation=softmax)
-        return logsoftmax(self.linear(Z))
+        Y_f, C_f, _, _ = self.forward.scanl(X, mask=mask)
+        Y_b, C_b, _, _ = self.backward.scanr(X, mask=mask)
+        return self.fuse(C_f, C_b)
 
     def loss(self, X, mask=None, flank=0, Z=None):
         if Z is None:
-            Z = self.transform(self.noise(X), mask=mask)
+            Y_f, C_f, _, _ = self.forward.scanl(X, mask=mask)
+            Y_b, C_b, _, _ = self.backward.scanr(X, mask=mask)
+            Z = self.fuse(Y_f[:-2], Y_b[2:])
+            Z = T.concatenate([Y_b[0:1], Z, Y_f[-2:-1]], axis=0)
         E = self.emit(Z)
         L = cross_entropy(E, X)
         C = confusion(T.argmax(E,axis=-1), X, E.shape[-1])
@@ -112,22 +125,16 @@ class TopicLSTM(object):
         return L[flank:n-flank], C[flank:n-flank]
 
     def gradient(self, X, mask=None, flank=0):
-        Z = self.transform(self.noise(X), mask=mask)
+        Y_f, C_f, _, _ = self.forward.scanl(X, mask=mask, clip=1.0)
+        Y_b, C_b, _, _ = self.backward.scanr(X, mask=mask, clip=1.0)
+        Z = self.fuse(Y_f[:-2], Y_b[2:])
+        Z = T.concatenate([Y_b[0:1], Z, Y_f[-2:-1]], axis=0)
         n = Z.shape[0]
         L, C = self.loss(X, mask=mask, flank=flank, Z=Z)
         loss = T.sum(L) #/ self.n_in
-        Tr = self.trans(Z)
-        if mask is not None:
-            Tr *= mask
-        if self.trans_weight > 0:
-            loss -= self.trans_weight*T.sum(Tr[flank:n-flank]) #/ self.n_topics
-        m = n-2*flank
-        #loss += self.trans.regularizer()*m/self.n_topics
         if self.sparsity > 0:
-            R = self.sparsity*Z
-            if mask is not None:
-                R *= T.shape_padright(mask)
-            loss += T.sum(R[flank:n-flank])
+            R = self.fuse(C_f[flank:n-flank], C_b[flank:n-flank])*T.shape_padright(mask[flank:n-flank])
+            loss += self.sparsity*T.sum(abs(R))
         gW = theano.grad(loss, self.weights, disconnected_inputs='warn')
         return gW, [L.sum(axis=[0,1]),C.sum(axis=[0,1])]
 

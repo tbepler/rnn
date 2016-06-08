@@ -6,7 +6,7 @@ from activation import fast_tanh, fast_sigmoid
 from rnn.initializers import orthogonal
 
 def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmoid, gact=fast_tanh
-        , cact=fast_tanh, mask=None, activation=lambda x: x):
+        , cact=fast_tanh, mask=None, activation=lambda x: x, clip=None):
     m = y0.shape[1]
     ifog = ifog + th.dot(y0, wy)
     i = iact(ifog[:,:m])
@@ -14,6 +14,8 @@ def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmo
     o = oact(ifog[:,2*m:3*m])
     g = gact(ifog[:,3*m:])
     c = c0*f + i*g
+    if clip is not None:
+        c = theano.gradient.grad_clip(c, -clip, clip)
     y = activation(o*cact(c))
     if mask is not None:
         mask = mask.dimshuffle(0, 'x')
@@ -249,6 +251,13 @@ class LayeredLSTM(object):
     def units(self):
         return sum(lstm.units for lstm in self.lstms)
 
+    @property
+    def weights(self):
+        ws = []
+        for lstm in self.lstms:
+            ws.extend(lstm.weights)
+        return ws
+
     def split(self, vector):
         if vector is not None:
             splits = []
@@ -270,9 +279,22 @@ class LayeredLSTM(object):
             ys.append(y[-1])
             cs.append(c[-1])
             x = y
-        ys = T.concatenate(ys, axis=-1)
-        cs = T.concatenate(cs, axis=-1)
-        return y, ys, cs
+        ys = th.concatenate(ys, axis=-1)
+        cs = th.concatenate(cs, axis=-1)
+        return y, c, ys, cs
+
+    def scanr(self, x, y0=None, c0=None, mask=None, **kwargs):
+        y0, c0 = self.split(y0), self.split(c0)
+        ys, cs = [], []
+        for i in xrange(len(self.lstms)):
+            lstm = self.lstms[i]
+            y, c = lstm.scanr(x, y0=y0[i], c0=c0[i], mask=mask, **kwargs)
+            ys.append(y[-1])
+            cs.append(c[-1])
+            x = y
+        ys = th.concatenate(ys, axis=-1)
+        cs = th.concatenate(cs, axis=-1)
+        return y, c, ys, cs
 
 class BLSTM(object):
     def __init__(self, ins, units, **kwargs):
