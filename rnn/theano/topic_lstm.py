@@ -99,7 +99,7 @@ class TopicLSTM(object):
 
     @property
     def weights(self):
-        return self.forward.weights + self.backward.weights
+        return self.forward.weights + self.backward.weights + self.emit.weights
 
     def fuse(self, x, y):
         return (x+y)/2.0
@@ -137,6 +137,8 @@ class TopicLSTM(object):
         if self.sparsity > 0:
             R = self.fuse(C_f[flank:n-flank], C_b[flank:n-flank])*T.shape_padright(mask[flank:n-flank])
             loss += self.sparsity*T.sum(abs(R))
+        for w in self.weights:
+            loss += 0.01*T.sum(w**2)
         gW = theano.grad(loss, self.weights, disconnected_inputs='warn')
         return gW, [L.sum(axis=[0,1]),C.sum(axis=[0,1])]
 
