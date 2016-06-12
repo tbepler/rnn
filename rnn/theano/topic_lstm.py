@@ -107,7 +107,9 @@ class TopicLSTM(object):
     def transform(self, X, mask=None):
         Y_f, C_f, _, _ = self.forward.scanl(X, mask=mask)
         Y_b, C_b, _, _ = self.backward.scanr(X, mask=mask)
-        return self.fuse(C_f, C_b)
+        Z = self.fuse(C_f[:-2], C_b[2:])
+        Z = T.concatenate([C_b[0:1], Z, C_f[-2:-1]], axis=0)
+        return Z
 
     def loss(self, X, mask=None, flank=0, Z=None):
         if Z is None:
