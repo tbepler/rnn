@@ -69,7 +69,7 @@ class RMSprop(SGD):
         self.eps = eps
     
     def _unscaled_deltas(self, weights, grads):
-        history = [theano.shared(w.get_value()*0) for w in weights]
+        history = [theano.shared(w.get_value()*0+1) for w in weights]
         hist_upd = [self.rho*h + (1-self.rho)*g*g for h,g in zip(history, grads)]
         delta = [g/(th.sqrt(h)+self.eps) for g,h in zip(grads, hist_upd)]
         return delta, zip(history, hist_upd)

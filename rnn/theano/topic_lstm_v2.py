@@ -11,6 +11,33 @@ from rnn.initializers import orthogonal
 def ident(x):
     return x
 
+class LSTMStack(object):
+    def __init__(self, n_in, n_topics, layers=[]):
+        if len(layers) > 0:
+            self.stack = LayeredLSTM(n_in, layers)
+            n_in = layers[-1]
+        else:
+            self.stack = None
+        self.top = LSTM(n_in, n_topics, gact=ident, cact=ident)
+
+    @property
+    def weights(self):
+        ws = []
+        if self.stack is not None:
+            ws.extend(self.stack.weights)
+        ws.extend(self.top.weights)
+        return ws
+
+    def scanl(self, X, **kwargs):
+        if self.stack is not None:
+            X, _, _, _ = self.stack.scanl(X, **kwargs)
+        return self.top.scanl(X, **kwargs)
+
+    def scanr(self, X, **kwargs):
+        if self.stack is not None:
+            X, _, _, _ = self.stack.scanr(X, **kwargs)
+        return self.top.scanr(X, **kwargs)
+
 class TopicLSTM(object):
     def __init__(self, n_in, n_topics, n_components, lstm_layers=[]
             , sparsity=0, unscaled_topic_r2=0, weights_r2=0.01, grad_clip=1.0):
@@ -21,14 +48,8 @@ class TopicLSTM(object):
         self.unscaled_topic_r2 = unscaled_topic_r2
         self.weights_r2 = weights_r2
         self.grad_clip = grad_clip
-        self.forward = LayeredLSTM(n_in, lstm_layers+[n_topics]
-                , gact=ident
-                , cact=ident
-                )
-        self.backward = LayeredLSTM(n_in, lstm_layers+[n_topics]
-                , gact=ident
-                , cact=ident
-                )
+        self.forward = LSTMStack(n_in, n_topics, layers=lstm_layers)
+        self.backward = LSTMStack(n_in, n_topics, layers=lstm_layers)
         w = np.random.randn(n_topics, n_components).astype(theano.config.floatX)
         orthogonal(w)
         self.topic_matrix = theano.shared(w, borrow=True)
@@ -70,8 +91,10 @@ class TopicLSTM(object):
         return x+y
 
     def unscaled_topic_mixture(self, X, mask=None, clip=None):
-        Y_f, C_f, _, _ = self.forward.scanl(X, mask=mask, clip=clip)
-        Y_b, C_b, _, _ = self.backward.scanr(X, mask=mask, clip=clip)
+        #Y_f, C_f, _, _ = self.forward.scanl(X, mask=mask, clip=clip)
+        #Y_b, C_b, _, _ = self.backward.scanr(X, mask=mask, clip=clip)
+        Y_f, C_f = self.forward.scanl(X, mask=mask, clip=clip)
+        Y_b, C_b = self.backward.scanr(X, mask=mask, clip=clip)
         Z = self.fuse(Y_f[:-2], Y_b[2:])
         Z = T.concatenate([Y_b[0:1], Z, Y_f[-2:-1]], axis=0)
         return Z
@@ -91,14 +114,30 @@ class TopicLSTM(object):
             return V
         else:
             return [P, V]
+
+    def prior(self, Z):
+        i,j = T.mgrid[0:Z.shape[0],0:Z.shape[1]]
+        I = Z.argmax(axis=-1)
+        return T.set_subtensor(Z[i,j,I], 0).sum(axis=-1)
+
+    def regularizer(self, Z, mask=None):
+        if mask is not None:
+            loss = self.sparsity*(self.prior(Z)*mask).sum()
+            loss += self.unscaled_topic_r2*((Z*Z).sum(axis=-1)*mask).sum()
+        else:
+            loss = self.sparsity*self.prior(Z).sum()
+            loss += self.unscaled_topic_r2*(Z*Z).sum()
+        for w in self.weights:
+            loss += self.weights_r2*T.sum(w*w)
+        return loss
+
     
     def _loss(self, X, mask=None, flank=0, clip=None, regularize=True):
         n = X.shape[0]
-        Z = self.unscaled_topics_mixture(X, mask=mask, clip=clip)[flank:n-flank]
+        Z = self.unscaled_topic_mixture(X, mask=mask, clip=clip)[flank:n-flank]
         X = X[flank:n-flank]
         mask = mask[flank:n-flank]
-        logP = logsoftmax(Z)
-        P = T.exp(logP)
+        P = softmax(Z)
         V = self.position_vector(P)
         Yh = self.class_logprob(V)
         L = cross_entropy(Yh, X)
@@ -108,10 +147,7 @@ class TopicLSTM(object):
             C *= T.shape_padright(T.shape_padright(mask))
         loss = T.sum(L)
         if regularize:
-            loss += self.sparsity*T.sum(logP)
-            loss += self.unscaled_topic_r2*T.sum(Z**2)
-            for w in self.weights:
-                loss += self.weights_r2*T.sum(w**2)
+            loss += self.regularizer(Z, mask=mask)
         return loss, L, C
 
     def loss(self, X, mask=None, flank=0):
