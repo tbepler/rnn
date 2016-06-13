@@ -10,5 +10,5 @@ def crossent(coding, true):
         return y.reshape(dims)
         #return -th.log(th.choose(true, coding))
     else:
-        return -th.sum(th.log(coding)*true, axis=coding.dims-1)
+        return -th.sum(th.log(coding)*true, axis=-1)
         

@@ -45,7 +45,12 @@ class SGD(object):
     def _compile(self, inputs, outputs, weights, grads):
         learning_rate = th.scalar()
         updates = self._updates(weights, grads, learning_rate)
-        return theano.function([learning_rate]+inputs, outputs, updates=updates)
+        print "Here"
+        print learning_rate
+        print inputs
+        print outputs
+        print updates
+        return theano.function([learning_rate]+inputs, outputs, updates=updates, allow_input_downcast=True)
 
     def __call__(self, data, inputs, outputs, weights, grads=None, max_iters=-1):
         if grads is None:
@@ -56,6 +61,7 @@ class SGD(object):
         while i < max_iters or max_iters < 0:
             j = 0.0
             for args in data:
+                #print args
                 ret = f(self.learning_rate, *args)
                 j += 1
                 yield i+j/n, ret

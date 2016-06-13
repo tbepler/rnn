@@ -41,6 +41,7 @@ class CharRNN(object):
         self.weights.append(decode.weights)
         yh = decode(y_layer)
         self.yh = softmax.softmax(yh)
+        print self.y
         self.loss_t = T.sum(crossent.crossent(self.yh, self.y)*self.mask[1:])
         self.correct = T.sum(T.eq(T.argmax(self.yh, axis=2), self.y)*self.mask[1:])
         self.count = T.sum(self.mask[1:])

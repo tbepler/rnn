@@ -1,8 +1,11 @@
+import sys
+
 import theano
 import theano.tensor as th
 import numpy as np
 
 from activation import fast_tanh, fast_sigmoid
+sys.path.append("../../")
 from rnn.initializers import orthogonal
 
 def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmoid, gact=fast_tanh
@@ -241,7 +244,7 @@ class LSTM(object):
 class LayeredLSTM(object):
     def __init__(self, ins, layers, **kwargs):
         self.lstms = []
-        for n in layers:
+        for n in range(layers):
             self.lstms.append(LSTM(ins, n, **kwargs))
             ins = n
 
@@ -278,11 +281,11 @@ class BLSTM(object):
     def __init__(self, ins, units, **kwargs):
         self.nl = units // 2 + units % 2
         self.nr = units // 2
-        self.lstml = LSTM(ins, nl, **kwargs)
-        self.lstmr = LSTM(ins, nr, **kwargs)
+        self.lstml = LSTM(ins, self.nl, **kwargs)
+        self.lstmr = LSTM(ins, self.nr, **kwargs)
 
     @property
-    def weights(self): return self.lstml.weights + self.lsmtr.weights
+    def weights(self): return self.lstml.weights + self.lstmr.weights
 
     @property
     def units(self): return self.nl + self.nr
@@ -306,14 +309,13 @@ class BLSTM(object):
         return th.concatenate([yl,yr], axis=yl.ndim-1)
 
 class LayeredBLSTM(object):
-    def __init__(self, ins, layers, **kwargs):
+    def __init__(self, ins, units, layers, **kwargs):
         self.blstms = []
-        for n in layers:
-            self.blstms.append(BLSTM(ins, n, **kwargs))
-            ins = n
+        for n in range(layers):
+            self.blstms.append(BLSTM(ins, units, **kwargs))
 
     @property
-    def weights(self): return sum(blstm.weights for blstm in self.blstms)
+    def weights(self): return th.sum(blstm.weights for blstm in self.blstms)
 
     @property
     def units(self): return sum(blstm.units for blstm in self.blstms)
@@ -333,11 +335,5 @@ class LayeredBLSTM(object):
         for blstm in self.blstms[1:]:
             x = blstm.scan(x, **kwargs)
         return x
-
-
-
-
-
-
 
 

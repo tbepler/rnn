@@ -1,27 +1,34 @@
-
 import math
 import numpy as np
 import random
 
-def as_matrix(data):
-    n = len(data)
-    m = max(len(x) for x in data)
-    dtype = data[0].dtype
-    X = np.zeros((m,n), dtype=dtype)
-    mask = np.ones((m,n), dtype=np.float32)
-    for i in xrange(n):
-        x = data[i]
-        k = len(x)
-        X[:k,i] = x
-        mask[k:,i] = 0
-    return X, mask
-
 class BatchIter(object):
-    def __init__(self, data, size, shuffle=True, mask=True):
-        self.data = data
-        self.use_mask = mask
-        #self.X, self.mask = as_matrix(data)
+    def __init__(self, data, size, shuffle=True, mask=True, xydata=True):
+        self.xydata = xydata
         self.size = size
+        self.use_mask = mask
+        self.data = data
+        if self.xydata:
+        # if in the form ([X1, X2, X3, ...], [Y1, Y2, Y3, ...]) where each element is batched data, this should separate the data into [X,Y] batches of the form ([X1, Y1], [X2, Y2], ...)
+            if self.use_mask:
+                xmask, x = self.mask(data[0])
+                ymask, y = self.mask(data[1])
+                self.mask = zip(xmask, ymask)
+            #self.data = np.concatenate((data), axis = 1).resize(data.size/(2*size) + 1,2,size)
+            else:
+                self.mask = None
+                x = data[0]
+                y = data[1]
+            self.data = zip(x, y)
+        else:
+            if self.use_mask:
+                xmask, x = self.mask(data)
+                self.mask = xmask
+                self.data = x
+            else:
+                self.mask = None
+                self.data = data
+        #self.X, self.mask = as_matrix(data)
         self.shuffle = shuffle
 
     @property
@@ -40,32 +47,60 @@ class BatchIter(object):
             #rng_state = np.random.get_state()
             #np.random.shuffle(self.X.T)
             #np.random.set_state(rng_state)
-            #np.random.shuffle(self.mask.T)
-            random.shuffle(self.data)
-        size = self.size
-        masks = None
-        if self.use_mask and type(self.data[0]) is tuple:
-            data, masks = zip(*self.data)
-        dtype = data[0].dtype
-        m = max(len(x) for x in data)
-        X = np.zeros((m, size), dtype=dtype)
-        if self.use_mask:
-            mask = np.ones((m, size), dtype=np.int8)
-        for i in xrange(0, len(data), size):
-            n = min(len(data)-i, size)
-            for j in xrange(n):
-                x = data[i+j]
-                k = len(x)
-                X[:k,j] = x
-                if self.use_mask:
-                    if masks is not None:
-                        mask[:k,j] = masks[i+j]
-                    else:
-                        mask[:k,j] = 1
-                    mask[k:,j] = 0
-            m = max(len(x) for x in data[i:i+n])
+            #np.rann dom.shuffle(self.mask.T)
             if self.use_mask:
-                yield X[:m,:n], mask[:m,:n]
+                shuffle_data = zip(self.data,self.mask)
             else:
-                yield X[:m,:n]
-            #yield self.X[:,i:i+size], self.mask[:,i:i+size]
+                shuffle_data = self.data
+            np.random.shuffle(shuffle_data)
+            if self.use_mask:
+                self.data, self.mask = zip(*shuffle_data)
+            else:
+                self.data = shuffle_data
+        size = self.size
+        for i in xrange(0, len(self.data), size):
+            x, y = zip(*self.data[i:i+size])
+            if self.use_mask:
+                yield x, y, zip(*self.mask[i:i+size])[0]
+            else:
+                yield x, y
+        # masks = None
+        # if self.use_mask and type(self.data[0]) is tuple:
+        #     data, masks = zip(*self.data)
+        # else:
+        #     data = self.data
+        # dtype = self.dtype
+        # m = max(len(x) for x in data)
+        # X = np.zeros((m, size), dtype=dtype)
+        # if self.use_mask:
+        #     mask = np.ones((m, size), dtype=dtype)
+        # for i in xrange(0, len(data), size):
+        #     n = min(len(data)-i, size)
+        #     for j in xrange(n):
+        #         x = data[i+j]
+        #         k = len(x)
+        #         X[:k,j] = x
+        #         if self.use_mask:
+        #             if masks is not None:
+        #                 mask[:k,j] = masks[i+j]
+        #             else:
+        #                 mask[:k,j] = 1
+        #             mask[k:,j] = 0
+        #     m = max(len(x) for x in data[i:i+n])
+        #     if self.use_mask:
+        #         yield X[:m,:n], mask[:m,:n]
+        #     else:
+        #         yield X[:m,:n]
+        #     #yield self.X[:,i:i+size], self.mask[:,i:i+size]
+
+    def mask(self, data):
+        dtype = self.dtype
+        batch_count = int(math.ceil(len(data)/float(self.size)))
+        rows_needed = batch_count*self.size - len(data)
+        size_array = np.append(np.array([len(data[i]) for i in range(len(data))]), np.zeros(rows_needed))
+        mask = np.arange(max(size_array)) < size_array[:,None]
+        zero_mask = np.zeros(mask.shape, dtype = dtype)
+        zero_mask[mask] = np.hstack((data[:]))
+        mask = np.invert(mask)
+        mask = mask.astype(np.int8)
+        return 1*mask, zero_mask
