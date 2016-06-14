@@ -4,6 +4,7 @@ import numpy as np
 from collections import OrderedDict
 import math
 import random
+from Bio import SwissProt
 
 import lstm
 import linear
@@ -19,7 +20,7 @@ def null_func(*args, **kwargs):
     pass
 
 class AnnoRNN(object):
-    def __init__(self, n_in, n_out, units, layers, labels, decoder=linear.Linear, itype='int32'
+    def __init__(self, n_in, units, layers, labels, decoder=linear.Linear, itype='int32'
                  , solver=solvers.RMSprop(0.01)):
        self.data = [T.matrix(dtype=itype), T.matrix(dtype=itype)]
        print self.data
@@ -159,20 +160,52 @@ class AnnoRNN(object):
         for batch in BatchIter(data, batch_size):
             print testing_out(batch)
 
+def import_seq_data(filename):
+    # Imports and preprocesses the sequence data
+    # Takes file and returns sequence and labels of the sequence in np array format
+    sequence_array = []
+    label_array = []
+    seq_dict = {'A':0, 'C':1, 'D':2, 'E':3, 'F':4, 'G':5, 'H':6, 'I':7, 'K':8, 'L':9, 'M':10, 'N':11, 'P':12, 'Q':13, 'R':14, 'S':15, 'T':16, 'V':17, 'W':18, 'Y':19}
+    max_len = 0
+    for record in SwissProt.parse(open(filename)):
+        if record.sequence_length > max_len:
+            max_len = record.sequence_length
+        labels = [0]*record.sequence_length
+        for feature in record.features:
+            if feature[0] == "HELIX":
+                new_label = 1
+            elif feature[0] == "STRAND":
+                new_label = 2
+            elif feature[0] == "TURN":
+                new_label = 3
+            else:
+                continue
+            begin = feature[1]
+            end = feature[2]
+            for i in range(begin-1, end-1):
+                labels[i] = new_label
+        label_array.append(labels) 
+        encoded_seq = []
+        for char in record.sequence:
+            encoded_seq += [seq_dict[char]]
+        sequence_array.append(encoded_seq)
+    return sequence_array, label_array, max_len
+
 if __name__ == '__main__':
-    length = 100
+    sequences, ss_labels, length = import_seq_data("uniprot_short.txt")
+    print length
     samples = 20
     labels = 4
-    model = AnnoRNN(4, 4, 100, 6, labels)
-    data = np.random.randint(0, labels-1, (length, samples)).astype(np.int32)
-    labeled_data = data
-    print data
-    data = np.array([data, labeled_data])
-    print data
+    model = AnnoRNN(20, 5, 6, labels)
+    # data = np.random.randint(0, labels-1, (length, samples)).astype(np.int32)
+    # labeled_data = data
+    # print data
+    data = np.array([sequences, ss_labels])
+    #print data
     #iterator = model.batch_iter(data, 64)
     #for i in iterator:
     #    model.fit(i)
-    fit_data = model.fit(data, batch_size = 19)
+    fit_data = model.fit(data, batch_size = 10)
     for i in fit_data:
         print i
     print "Begin testing"

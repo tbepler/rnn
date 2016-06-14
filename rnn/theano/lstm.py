@@ -279,6 +279,7 @@ class LayeredLSTM(object):
 
 class BLSTM(object):
     def __init__(self, ins, units, **kwargs):
+        # ins = dimension for set of parameters
         self.nl = units // 2 + units % 2
         self.nr = units // 2
         self.lstml = LSTM(ins, self.nl, **kwargs)
