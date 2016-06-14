@@ -46,6 +46,8 @@ class BatchIter(object):
         masks = None
         if self.use_mask and type(self.data[0]) is tuple:
             data, masks = zip(*self.data)
+        else:
+            data = self.data
         dtype = data[0].dtype
         m = max(len(x) for x in data)
         X = np.zeros((m, size), dtype=dtype)

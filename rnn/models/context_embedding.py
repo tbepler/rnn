@@ -42,8 +42,8 @@ class ContextEmbedding(object):
         index = 0
         for x in data:
             mask = None
+            n = len(x)
             if flank > 0:
-                n = len(x)
                 mask = np.zeros(n+2*flank, dtype=np.int8)
                 mask[flank:-flank] = 1
                 x_flanked = np.zeros(n+2*flank, dtype=x.dtype)

@@ -11,6 +11,11 @@ from rnn.initializers import orthogonal
 def ident(x):
     return x
 
+def dampen(x):
+    #transform x as sign(x)*ln(|x|+1)
+    # preserves full range, but dampens the gradient
+    return T.sgn(x)*T.log(abs(x)+1)
+
 class LSTMStack(object):
     def __init__(self, n_in, n_topics, layers=[]):
         if len(layers) > 0:
@@ -18,7 +23,7 @@ class LSTMStack(object):
             n_in = layers[-1]
         else:
             self.stack = None
-        self.top = LSTM(n_in, n_topics, gact=ident, cact=ident)
+        self.top = LSTM(n_in, n_topics, gact=dampen, cact=dampen)
 
     @property
     def weights(self):
@@ -40,13 +45,14 @@ class LSTMStack(object):
 
 class TopicLSTM(object):
     def __init__(self, n_in, n_topics, n_components, lstm_layers=[]
-            , sparsity=0, unscaled_topic_r2=0, weights_r2=0.01, grad_clip=1.0):
+            , sparsity=0, unscaled_topic_r2=0, weights_r2=0.01, topic_orth_r2=0, grad_clip=None):
         self.n_in = n_in
         self.n_topics = n_topics
         self.n_components = n_components
         self.sparsity = sparsity
         self.unscaled_topic_r2 = unscaled_topic_r2
         self.weights_r2 = weights_r2
+        self.topic_orth_r2 = topic_orth_r2
         self.grad_clip = grad_clip
         self.forward = LSTMStack(n_in, n_topics, layers=lstm_layers)
         self.backward = LSTMStack(n_in, n_topics, layers=lstm_layers)
@@ -63,6 +69,7 @@ class TopicLSTM(object):
         state['sparsity'] = self.sparsity
         state['unscaled_topic_r2'] = self.unscaled_topic_r2
         state['weights_r2'] = self.weights_r2
+        state['topic_orth_r2'] = self.topic_orth_r2
         state['grad_clip'] = self.grad_clip
         state['forward'] = self.forward
         state['backward'] = self.backward
@@ -77,6 +84,7 @@ class TopicLSTM(object):
         self.sparsity = state['sparsity']
         self.unscaled_topic_r2 = state['unscaled_topic_r2']
         self.weights_r2 = state['weights_r2']
+        self.topic_orth_r2 = state.get('topic_orth_r2', 0)
         self.grad_clip = state['grad_clip']
         self.forward = state['forward']
         self.backward = state['backward']
@@ -100,7 +108,10 @@ class TopicLSTM(object):
         return Z
 
     def position_vector(self, P):
-        return T.dot(P, self.topic_matrix)
+        W = self.topic_matrix/T.sqrt(T.sum(self.topic_matrix**2, axis=-1, keepdims=True))
+        X = T.dot(P, W)
+        X = X/T.sqrt(T.sum(X**2, axis=-1, keepdims=True))
+        return X
         
     def class_logprob(self, V):
         return logsoftmax(self.logit_decoder(V), axis=-1)
@@ -120,15 +131,18 @@ class TopicLSTM(object):
         I = Z.argmax(axis=-1)
         return T.set_subtensor(Z[i,j,I], 0).sum(axis=-1)
 
-    def regularizer(self, Z, mask=None):
+    def regularizer(self, Z, m, mask=None):
         if mask is not None:
-            loss = self.sparsity*(self.prior(Z)*mask).sum()
-            loss += self.unscaled_topic_r2*((Z*Z).sum(axis=-1)*mask).sum()
+            loss = self.sparsity*(self.prior(Z)*mask).sum() # / m
+            loss += self.unscaled_topic_r2*((Z**2).sum(axis=-1)*mask).sum() # / m
         else:
-            loss = self.sparsity*self.prior(Z).sum()
-            loss += self.unscaled_topic_r2*(Z*Z).sum()
+            loss = self.sparsity*self.prior(Z).sum() # / m
+            loss += self.unscaled_topic_r2*(Z**2).sum() # / m
         for w in self.weights:
             loss += self.weights_r2*T.sum(w*w)
+        if self.topic_orth_r2 > 0:
+            U = T.dot(self.topic_matrix, self.topic_matrix.T)
+            loss += T.sum((U - T.eye(U.shape[0]))**2)
         return loss
 
     
@@ -145,9 +159,10 @@ class TopicLSTM(object):
         if mask is not None:
             L *= T.shape_padright(mask)
             C *= T.shape_padright(T.shape_padright(mask))
-        loss = T.sum(L)
+        m = mask.sum() if mask is not None else L.size
+        loss = T.sum(L) # / m
         if regularize:
-            loss += self.regularizer(Z, mask=mask)
+            loss += self.regularizer(Z, m, mask=mask)
         return loss, L, C
 
     def loss(self, X, mask=None, flank=0):
