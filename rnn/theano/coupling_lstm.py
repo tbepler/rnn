@@ -60,18 +60,26 @@ class Attention(object):
         self.W = theano.shared(state['W'], borrow=True)
         
     def __call__(self, L, R, mask=None):
-        pivot = (L[:-2]+R[2:])/2
+        L = L / T.sqrt(T.sum(L**2, axis=-1, keepdims=True))
+        R = R / T.sqrt(T.sum(R**2, axis=-1, keepdims=True))
+        pivot = (L[:-2]+R[2:])
         pivot = T.concatenate([R[0:1], pivot, L[-2:-1]], axis=0)
+        pivot = pivot / T.sqrt(T.sum(pivot**2, axis=-1, keepdims=True))
         W = T.dot(pivot, self.W)
         i = T.shape_padright(T.arange(L.shape[0]))
         I = T.shape_padright(T.shape_padright(i.T < i))
         J = T.shape_padright(T.shape_padright(i.T > i))
         A = L*I + R*J
-        A = T.sum(A*W, axis=-1)
+        P = T.sum(A*W, axis=-1)
+        i = T.arange(L.shape[0])
+        P = T.set_subtensor(P[i,i], float('-inf'))
+        if mask is not None:
+            P += T.log(mask)
+        P = softmax(P, axis=1)
+        C = T.sum(A*T.shape_padright(P), axis=1)
+        C = C / T.sqrt(T.sum(C**2, axis=-1, keepdims=True))
+        return P, C
         
-
-        
-
 class CouplingLSTM(object):
     def __init__(self, n_in, n_components, layers=[], weights_r2=0.01, grad_clip=None):
         self.n_in = n_in
@@ -80,113 +88,76 @@ class CouplingLSTM(object):
         self.grad_clip = grad_clip
         self.forward = LayeredLSTM(n_in, layers+[n_components])
         self.backward = LayeredLSTM(n_in, layers+[n_components])
-        w = np.random.randn(n_topics, n_components).astype(theano.config.floatX)
-        orthogonal(w)
-        self.topic_matrix = theano.shared(w, borrow=True)
+        self._attention = Attention(n_components)
         self.logit_decoder = Linear(n_components, n_in)
 
     def __getstate__(self):
         state = {}
         state['n_in'] = self.n_in
-        state['n_topics'] = self.n_topics
         state['n_components'] = self.n_components
-        state['sparsity'] = self.sparsity
-        state['unscaled_topic_r2'] = self.unscaled_topic_r2
         state['weights_r2'] = self.weights_r2
-        state['topic_orth_r2'] = self.topic_orth_r2
         state['grad_clip'] = self.grad_clip
         state['forward'] = self.forward
         state['backward'] = self.backward
-        state['topic_matrix'] = self.topic_matrix.get_value(borrow=True)
+        state['attention'] = self._attention
         state['logit_decoder'] = self.logit_decoder
         return state
 
     def __setstate__(self, state):
         self.n_in = state['n_in']
-        self.n_topics = state['n_topics']
         self.n_components = state['n_components']
-        self.sparsity = state['sparsity']
-        self.unscaled_topic_r2 = state['unscaled_topic_r2']
         self.weights_r2 = state['weights_r2']
-        self.topic_orth_r2 = state.get('topic_orth_r2', 0)
         self.grad_clip = state['grad_clip']
         self.forward = state['forward']
         self.backward = state['backward']
-        self.topic_matrix = theano.shared(state['topic_matrix'], borrow=True)
+        self._attention = state['attention']
         self.logit_decider = state['logit_decoder']
 
     @property
     def weights(self):
-        return self.forward.weights + self.backward.weights + [self.topic_matrix] + self.logit_decoder.weights
+        return self.forward.weights + self.backward.weights + self._attention.weights + self.logit_decoder.weights
 
-    def fuse(self, x, y):
-        return x+y
-
-    def unscaled_topic_mixture(self, X, mask=None, clip=None):
-        #Y_f, C_f, _, _ = self.forward.scanl(X, mask=mask, clip=clip)
-        #Y_b, C_b, _, _ = self.backward.scanr(X, mask=mask, clip=clip)
-        Y_f, C_f = self.forward.scanl(X, mask=mask, clip=clip)
-        Y_b, C_b = self.backward.scanr(X, mask=mask, clip=clip)
-        Z = self.fuse(Y_f[:-2], Y_b[2:])
-        Z = T.concatenate([Y_b[0:1], Z, Y_f[-2:-1]], axis=0)
-        return Z
-
-    def position_vector(self, P):
-        W = self.topic_matrix/T.sqrt(T.sum(self.topic_matrix**2, axis=-1, keepdims=True))
-        X = T.dot(P, W)
-        X = X/T.sqrt(T.sum(X**2, axis=-1, keepdims=True))
-        return X
-        
     def class_logprob(self, V):
         return logsoftmax(self.logit_decoder(V), axis=-1)
 
-    def transform(self, X, mask=None, topics=True, vectors=False):
-        P = softmax(self.unscaled_topic_mixture(X, mask=mask))
-        V = self.position_vector(P)
-        if topics and not vectors:
-            return P
-        elif not topics and vectors:
-            return V
-        else:
-            return [P, V]
+    def transform(self, X, mask=None):
+        L = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
+        R = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
+        _, C = self._attention(L, R, mask=mask)
+        return C
+
+    def attention(self, X, mask=None):
+        L = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
+        R = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
+        A, _ = self._attention(L, R, mask=mask)
+        return A
 
     def prior(self, Z):
         i,j = T.mgrid[0:Z.shape[0],0:Z.shape[1]]
         I = Z.argmax(axis=-1)
         return T.set_subtensor(Z[i,j,I], 0).sum(axis=-1)
 
-    def regularizer(self, Z, m, mask=None):
-        if mask is not None:
-            loss = self.sparsity*(self.prior(Z)*mask).sum() # / m
-            loss += self.unscaled_topic_r2*((Z**2).sum(axis=-1)*mask).sum() # / m
-        else:
-            loss = self.sparsity*self.prior(Z).sum() # / m
-            loss += self.unscaled_topic_r2*(Z**2).sum() # / m
+    def regularizer(self):
         for w in self.weights:
             loss += self.weights_r2*T.sum(w*w)
-        if self.topic_orth_r2 > 0:
-            U = T.dot(self.topic_matrix, self.topic_matrix.T)
-            loss += T.sum((U - T.eye(U.shape[0]))**2)
         return loss
-
     
-    def _loss(self, X, mask=None, flank=0, clip=None, regularize=True):
+    def _loss(self, X, mask=None, flank=0, regularize=True):
         n = X.shape[0]
-        Z = self.unscaled_topic_mixture(X, mask=mask, clip=clip)[flank:n-flank]
+        V = self.transform(X, mask=mask)
         X = X[flank:n-flank]
-        mask = mask[flank:n-flank]
-        P = softmax(Z)
-        V = self.position_vector(P)
+        if mask is not None:
+            mask = mask[flank:n-flank]
+        V = V[flank:n-flank]
         Yh = self.class_logprob(V)
         L = cross_entropy(Yh, X)
         C = confusion(T.argmax(Yh,axis=-1), X, Yh.shape[-1])
         if mask is not None:
             L *= T.shape_padright(mask)
             C *= T.shape_padright(T.shape_padright(mask))
-        m = mask.sum() if mask is not None else L.size
-        loss = T.sum(L) # / m
+        loss = T.sum(L)
         if regularize:
-            loss += self.regularizer(Z, m, mask=mask)
+            loss += self.regularizer()
         return loss, L, C
 
     def loss(self, X, mask=None, flank=0):
@@ -194,7 +165,7 @@ class CouplingLSTM(object):
         return L, C
 
     def gradient(self, X, mask=None, flank=0):
-        loss, L, C = self._loss(X, mask=mask, flank=flank, clip=self.grad_clip)
+        loss, L, C = self._loss(X, mask=mask, flank=flank)
         gW = theano.grad(loss, self.weights, disconnected_inputs='warn')
         return gW, [L.sum(axis=[0,1]),C.sum(axis=[0,1])]
 
