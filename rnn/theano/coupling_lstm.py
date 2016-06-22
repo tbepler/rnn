@@ -43,6 +43,13 @@ class LSTMStack(object):
             X, _, _, _ = self.stack.scanr(X, **kwargs)
         return self.top.scanr(X, **kwargs)
 
+def normalize(X, axis=-1):
+    R = T.log(abs(X))
+    R -= T.max(R, axis=axis, keepdims=True)
+    X = T.sgn(X)*T.exp(R)
+    Z = T.sqrt(T.sum(X**2, axis=axis, keepdims=True))
+    return X / T.maximum(Z, 1e-6)
+
 class Attention(object):
     def __init__(self, n):
         w = np.random.randn(n, n).astype(theano.config.floatX)
@@ -54,32 +61,57 @@ class Attention(object):
         return [self.W]
 
     def __getstate__(self):
-        return {'W': self.W.get_values(borrow=True)}
+        return {'W': self.W.get_value(borrow=True)}
 
     def __setstate__(self, state):
         self.W = theano.shared(state['W'], borrow=True)
         
     def __call__(self, L, R, mask=None):
-        L = L / T.sqrt(T.sum(L**2, axis=-1, keepdims=True))
-        R = R / T.sqrt(T.sum(R**2, axis=-1, keepdims=True))
+        #L = L / T.sqrt(T.sum(L**2, axis=-1, keepdims=True))
+        #L = normalize(L, axis=-1)
+        #R = R / T.sqrt(T.sum(R**2, axis=-1, keepdims=True))
+        #R = normalize(R, axis=-1)
         pivot = (L[:-2]+R[2:])
-        pivot = T.concatenate([R[0:1], pivot, L[-2:-1]], axis=0)
-        pivot = pivot / T.sqrt(T.sum(pivot**2, axis=-1, keepdims=True))
+        pivot = T.concatenate([R[1:2], pivot, L[-2:-1]], axis=0)
+        #pivot = pivot / T.sqrt(T.sum(pivot**2, axis=-1, keepdims=True))
+        #pivot = normalize(pivot, axis=-1)
+        #W = dampen(T.dot(pivot, self.W))
         W = T.dot(pivot, self.W)
+        """
+        I = T.arange(L.shape[0])
+        def f(i):
+            A = L*T.shape_padright(T.shape_padright(I<i)) + R*T.shape_padright(T.shape_padright(I>i))
+            P = T.sum(A*W[i], axis=-1)
+            P = T.set_subtensor(P[i], float('-inf'))
+            if mask is not None:
+                P += T.log(mask)
+            P = softmax(P, axis=0)
+            C = T.sum(A*T.shape_padright(P), axis=0)
+            return P, C
+
+        [P,C], _ = theano.map(f, I) 
+        return P, C
+        """
         i = T.shape_padright(T.arange(L.shape[0]))
         I = T.shape_padright(T.shape_padright(i.T < i))
         J = T.shape_padright(T.shape_padright(i.T > i))
         A = L*I + R*J
+        #A = A.dimshuffle(0,2,1,3)
+        #P = dampen(T.dot(A, W))
         P = T.sum(A*W, axis=-1)
+        #P = T.log(T.nnet.relu(T.sum(A*W, axis=-1))+1)
         i = T.arange(L.shape[0])
         P = T.set_subtensor(P[i,i], float('-inf'))
         if mask is not None:
             P += T.log(mask)
+            #P *= mask
         P = softmax(P, axis=1)
+        #C = T.dot(A, P)
         C = T.sum(A*T.shape_padright(P), axis=1)
-        C = C / T.sqrt(T.sum(C**2, axis=-1, keepdims=True))
+        #C = normalize(C)
+        #C = C / T.sqrt(T.sum(C**2, axis=-1, keepdims=True))
         return P, C
-        
+
 class CouplingLSTM(object):
     def __init__(self, n_in, n_components, layers=[], weights_r2=0.01, grad_clip=None):
         self.n_in = n_in
@@ -121,14 +153,18 @@ class CouplingLSTM(object):
         return logsoftmax(self.logit_decoder(V), axis=-1)
 
     def transform(self, X, mask=None):
-        L = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
-        R = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
+        L,_,_,_ = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
+        R,_,_,_ = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
+        #L = theano.gradient.grad_clip(L, -self.grad_clip, self.grad_clip)
+        #R = theano.gradient.grad_clip(R, -self.grad_clip, self.grad_clip)
         _, C = self._attention(L, R, mask=mask)
         return C
 
     def attention(self, X, mask=None):
-        L = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
-        R = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
+        L,_,_,_ = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
+        R,_,_,_ = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
+        #L = theano.gradient.grad_clip(L, -self.grad_clip, self.grad_clip)
+        #R = theano.gradient.grad_clip(R, -self.grad_clip, self.grad_clip)
         A, _ = self._attention(L, R, mask=mask)
         return A
 
@@ -138,6 +174,7 @@ class CouplingLSTM(object):
         return T.set_subtensor(Z[i,j,I], 0).sum(axis=-1)
 
     def regularizer(self):
+        loss = 0
         for w in self.weights:
             loss += self.weights_r2*T.sum(w*w)
         return loss
@@ -167,6 +204,7 @@ class CouplingLSTM(object):
     def gradient(self, X, mask=None, flank=0):
         loss, L, C = self._loss(X, mask=mask, flank=flank)
         gW = theano.grad(loss, self.weights, disconnected_inputs='warn')
+        #gW = [theano.printing.Print('Gradient {}: '.format(i))(gW[i]) for i in xrange(len(gW))]
         return gW, [L.sum(axis=[0,1]),C.sum(axis=[0,1])]
 
         

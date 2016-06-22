@@ -104,7 +104,7 @@ class TopicLSTM(object):
         Y_f, C_f = self.forward.scanl(X, mask=mask, clip=clip)
         Y_b, C_b = self.backward.scanr(X, mask=mask, clip=clip)
         Z = self.fuse(Y_f[:-2], Y_b[2:])
-        Z = T.concatenate([Y_b[0:1], Z, Y_f[-2:-1]], axis=0)
+        Z = T.concatenate([Y_b[1:2], Z, Y_f[-2:-1]], axis=0)
         return Z
 
     def position_vector(self, P):

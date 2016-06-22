@@ -175,24 +175,26 @@ class ContextEmbedding(object):
         weights = self.encoder.weights
         return self.optimizer(minibatches, [X, mask], res, weights, grads=gws, max_iters=max_iters)        
 
-    def fit(self, train, validate=None, max_iters=100, callback=null_func, **kwargs):
+    def fit(self, train, validate=None, max_iters=100, callback=null_func, yield_every=1.0, **kwargs):
         from rnn.minibatcher import BatchIter
         train_data = list(self.split(train, keep_index=False))
         train_minibatches = BatchIter(train_data, self.batch_size)
         steps = self.fit_steps(train_minibatches, max_iters=max_iters)
         callback(0, 'fit')
         train_res = None
+        last_yield = 0.0
         for it, res in steps:
             if train_res is None:
                 train_res = [0 for _ in res]
             for i in xrange(len(res)):
                 train_res[i] += res[i]
-            if it % 1 == 0:
+            if it - last_yield > yield_every:
+                last_yield = it
                 if validate is not None:
                     val_res = self.loss(validate, callback=callback)
-                    yield val_res + train_res
+                    yield it, val_res + train_res
                 else:
-                    yield train_res
+                    yield it, train_res
                 for i in xrange(len(train_res)):
                     train_res[i] = 0
             callback(it%1, 'fit')
