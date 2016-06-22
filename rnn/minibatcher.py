@@ -60,8 +60,9 @@ class BatchIter(object):
         size = self.size
         for i in xrange(0, len(self.data), size):
             x, y = zip(*self.data[i:i+size])
+            mask = zip(*self.mask[i:i+size])[0]
             if self.use_mask:
-                yield x, y, zip(*self.mask[i:i+size])[0]
+                yield x, y, mask 
             else:
                 yield x, y
         # masks = None
@@ -101,6 +102,6 @@ class BatchIter(object):
         mask = np.arange(max(size_array)) < size_array[:,None]
         zero_mask = np.zeros(mask.shape, dtype = dtype)
         zero_mask[mask] = np.hstack((data[:]))
-        mask = np.invert(mask)
+        #mask = np.invert(mask)
         mask = mask.astype(np.int8)
         return 1*mask, zero_mask

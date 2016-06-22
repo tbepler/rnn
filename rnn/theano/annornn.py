@@ -1,6 +1,7 @@
 import theano
 import theano.tensor as T
 import numpy as np
+np.set_printoptions(threshold=np.nan)
 from collections import OrderedDict
 import math
 import random
@@ -44,7 +45,8 @@ class AnnoRNN(object):
        loss, confusion = crf_layer.loss(self.yh, self.y)
        self.loss_t = T.sum(loss * T.shape_padright(self.mask))
        print self.loss_t
-       self.count = T.sum(self.mask[1:])
+       self.count = T.sum(self.mask)
+       self.confusion = confusion * T.shape_padright(T.shape_padright(self.mask))
        self.solver = solver
        #compile theano functions
        #self._loss = theano.function([self.data, self.mask], [self.loss_t, self.correct, self.count])
@@ -70,8 +72,7 @@ class AnnoRNN(object):
        # self.yh = softmax.softmax(yh)
        # print self.y
        # self.loss_t = T.sum(crossent.crossent(self.yh, self.y)*self.mask[1:])
-       # #self.correct = T.sum(T.eq(T.argmax(self.yh, axis=2), self.y)*self.mask[1:])
-       # self.count = T.sum(self.mask[1:])
+       # self.correct = T.sum(T.eq(T.argmax(self.yh, axis=2), self.y)*self.mask)
        # self.solver = solver
        # #compile theano functions
        # #self._loss = theano.function([self.data, self.mask], [self.loss_t, self.correct, self.count])
@@ -79,26 +80,28 @@ class AnnoRNN(object):
            
 
 
-    def fit(self, data_train, validate=None, batch_size=256, max_iters=100, callback=null_func):
-        steps = self.solver(BatchIter(data_train, batch_size), [self.x, self.y, self.mask], [self.loss_t], self.weights, max_iters=max_iters)
+    def fit(self, data_train, validate=None, batch_size=256, max_iters=10, callback=null_func):
+        steps = self.solver(BatchIter(data_train, batch_size), [self.x, self.y, self.mask], [self.loss_t, self.confusion, self.count], self.weights, max_iters=max_iters)
         #, [self.data, self.mask], self.loss_t, [self.correct, self.count], max_iters=max_iters)
         if validate is not None:
             validate = BatchIter(validate, batch_size, shuffle=False)
         train_loss, train_correct, train_n = 0, 0, 0
         callback(0, 'fit')
-        for it, (l) in steps:
-            print train_loss
-            train_loss += l[0]
-            #train_correct += c
-            #train_n += n
+        for it, (l, confusion, n) in steps:
+            #print train_loss
+            #print l
+            c = np.sum([np.trace(square) for row in confusion for square in row])
+            #print n
+            train_loss += l
+            train_correct += c
+            train_n += n
             if it % 1 == 0:
                 if validate is not None:
                     res = self.loss_iter(validate, callback=callback)
                     res['TrainLoss'] = train_loss/train_n
                     res['TrainAccuracy'] = float(train_correct)/train_n
                 else:
-                    res = OrderedDict([('Loss', train_loss/train_n)])
-                    #                   , ('Accuracy', float(train_correct)/train_n)])
+                    res = OrderedDict([('Loss', train_loss/train_n), ('Accuracy', float(train_correct)/train_n)])
                 train_loss, train_correct, train_n = 0, 0, 0
                 yield res
             callback(it%1, 'fit')
@@ -156,9 +159,16 @@ class AnnoRNN(object):
             yield float(i+n)/len(data), X, mask
 
     def testing(self, data, batch_size = 20):
-        testing_out = theano.function([self.x, self.y, self.mask], [self.loss_t])
+        testing_out = theano.function([self.x, self.y, self.mask], [self.loss_t, self.confusion, self.count, self.yh])
         for batch in BatchIter(data, batch_size):
-            print testing_out(batch)
+            loss, confusion, count, yh =  testing_out(batch[0], batch[1], batch[2])
+            correct = np.sum([np.trace(square) for row in confusion for square in row])
+            print "Batch accuracy:"
+            print float(correct)/count
+            #print loss
+            #print batch[1]
+            #print np.array(T.argmax(yh, axis = 2).eval())
+            #print yh
 
 def import_seq_data(filename):
     # Imports and preprocesses the sequence data
@@ -168,9 +178,8 @@ def import_seq_data(filename):
     seq_dict = {'A':0, 'C':1, 'D':2, 'E':3, 'F':4, 'G':5, 'H':6, 'I':7, 'K':8, 'L':9, 'M':10, 'N':11, 'P':12, 'Q':13, 'R':14, 'S':15, 'T':16, 'V':17, 'W':18, 'Y':19}
     max_len = 0
     for record in SwissProt.parse(open(filename)):
-        if record.sequence_length > max_len:
-            max_len = record.sequence_length
         labels = [0]*record.sequence_length
+        changed = False
         for feature in record.features:
             if feature[0] == "HELIX":
                 new_label = 1
@@ -182,25 +191,39 @@ def import_seq_data(filename):
                 continue
             begin = feature[1]
             end = feature[2]
+            changed = True
             for i in range(begin-1, end-1):
                 labels[i] = new_label
-        label_array.append(labels) 
         encoded_seq = []
         for char in record.sequence:
-            encoded_seq += [seq_dict[char]]
+            if char in seq_dict:
+                encoded_seq += [seq_dict[char]]
+            else:
+                #print "nope nope"
+                changed = False
+        if not changed:
+            continue
+        label_array.append(labels) 
         sequence_array.append(encoded_seq)
+        if record.sequence_length > max_len:
+            max_len = record.sequence_length
     return sequence_array, label_array, max_len
 
 if __name__ == '__main__':
-    sequences, ss_labels, length = import_seq_data("uniprot_short.txt")
+    sequences, ss_labels, length = import_seq_data("uniprot_human.txt")
     print length
     samples = 20
     labels = 4
-    model = AnnoRNN(20, 5, 6, labels)
+    train_split = 0.7
+    model = AnnoRNN(20, labels, 6, labels)
     # data = np.random.randint(0, labels-1, (length, samples)).astype(np.int32)
     # labeled_data = data
     # print data
     data = np.array([sequences, ss_labels])
+    #print data.shape
+    #train_data, test_data = np.hsplit(data, [int(train_split*data.shape[1])])
+    #print train_data.shape
+    #print test_data.shape
     #print data
     #iterator = model.batch_iter(data, 64)
     #for i in iterator:
