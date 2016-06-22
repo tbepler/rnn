@@ -2,7 +2,7 @@ import theano
 import theano.tensor as T
 import numpy as np
 
-from rnn.models.context_embedding import ContextEmbedding
+from rnn.models.context_embedding import ContextEmbedding, null_func
 import rnn.theano.coupling_lstm as coupling_lstm
 
 class CouplingLSTM(ContextEmbedding):
