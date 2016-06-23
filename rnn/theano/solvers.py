@@ -63,13 +63,14 @@ class SGD(object):
             self.learning_rate = self.decay(self.learning_rate)
 
 class RMSprop(SGD):
-    def __init__(self, lr, rho=0.95, eps=1e-5, momentum=0.9, decay=NoDecay()):
+    def __init__(self, lr, rho=0.95, eps=1e-5, init_norm=1.0, momentum=0.9, decay=NoDecay()):
         super(RMSprop, self).__init__(lr, momentum=momentum, decay=decay)
         self.rho = rho
         self.eps = eps
+        self.init_norm = init_norm
     
     def _unscaled_deltas(self, weights, grads):
-        history = [theano.shared(w.get_value()*0+1) for w in weights]
+        history = [theano.shared(w.get_value()*0+self.init_norm) for w in weights]
         hist_upd = [self.rho*h + (1-self.rho)*g*g for h,g in zip(history, grads)]
         delta = [g/(th.sqrt(h)+self.eps) for g,h in zip(grads, hist_upd)]
         return delta, zip(history, hist_upd)
