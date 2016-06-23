@@ -71,9 +71,9 @@ class Attention(object):
         
     def __call__(self, L, R, pivot=None, mask=None):
         #L = L / T.sqrt(T.sum(L**2, axis=-1, keepdims=True))
-        L = normalize(L, axis=-1)
+        #L = normalize(L, axis=-1)
         #R = R / T.sqrt(T.sum(R**2, axis=-1, keepdims=True))
-        R = normalize(R, axis=-1)
+        #R = normalize(R, axis=-1)
         if pivot is None:
             pivot = (L[:-2]+R[2:])/2
             pivot = T.concatenate([R[1:2], pivot, L[-2:-1]], axis=0)
