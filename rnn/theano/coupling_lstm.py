@@ -44,11 +44,14 @@ class LSTMStack(object):
         return self.top.scanr(X, **kwargs)
 
 def normalize(X, axis=-1):
-    R = T.log(abs(X))
-    R -= T.max(R, axis=axis, keepdims=True)
-    X = T.sgn(X)*T.exp(R)
     Z = T.sqrt(T.sum(X**2, axis=axis, keepdims=True))
-    return X / T.maximum(Z, 1e-6)
+    Z = T.maximum(Z, 1e-38)
+    return X / Z
+    #R = T.log(abs(X))
+    #R -= T.max(R, axis=axis, keepdims=True)
+    #X = T.sgn(X)*T.exp(R)
+    #Z = T.sqrt(T.sum(X**2, axis=axis, keepdims=True))
+    #return X / T.maximum(Z, 1e-6)
 
 class Attention(object):
     def __init__(self, n):
@@ -66,13 +69,14 @@ class Attention(object):
     def __setstate__(self, state):
         self.W = theano.shared(state['W'], borrow=True)
         
-    def __call__(self, L, R, mask=None):
+    def __call__(self, L, R, pivot=None, mask=None):
         #L = L / T.sqrt(T.sum(L**2, axis=-1, keepdims=True))
-        #L = normalize(L, axis=-1)
+        L = normalize(L, axis=-1)
         #R = R / T.sqrt(T.sum(R**2, axis=-1, keepdims=True))
-        #R = normalize(R, axis=-1)
-        pivot = (L[:-2]+R[2:])
-        pivot = T.concatenate([R[1:2], pivot, L[-2:-1]], axis=0)
+        R = normalize(R, axis=-1)
+        if pivot is None:
+            pivot = (L[:-2]+R[2:])/2
+            pivot = T.concatenate([R[1:2], pivot, L[-2:-1]], axis=0)
         #pivot = pivot / T.sqrt(T.sum(pivot**2, axis=-1, keepdims=True))
         #pivot = normalize(pivot, axis=-1)
         #W = dampen(T.dot(pivot, self.W))
@@ -113,13 +117,15 @@ class Attention(object):
         return P, C
 
 class CouplingLSTM(object):
-    def __init__(self, n_in, n_components, layers=[], weights_r2=0.01, grad_clip=None):
+    def __init__(self, n_in, n_components, layers=[], pivot_layers=[], weights_r2=0.01, grad_clip=None):
         self.n_in = n_in
         self.n_components = n_components
         self.weights_r2 = weights_r2
         self.grad_clip = grad_clip
         self.forward = LayeredLSTM(n_in, layers+[n_components])
         self.backward = LayeredLSTM(n_in, layers+[n_components])
+        self.fw_pivot = LayeredLSTM(n_in, pivot_layers+[n_components])
+        self.bw_pivot = LayeredLSTM(n_in, pivot_layers+[n_components])
         self._attention = Attention(n_components)
         self.logit_decoder = Linear(n_components, n_in)
 
@@ -131,6 +137,8 @@ class CouplingLSTM(object):
         state['grad_clip'] = self.grad_clip
         state['forward'] = self.forward
         state['backward'] = self.backward
+        state['fw_pivot'] = self.fw_pivot
+        state['bw_pivot'] = self.bw_pivot
         state['attention'] = self._attention
         state['logit_decoder'] = self.logit_decoder
         return state
@@ -142,6 +150,8 @@ class CouplingLSTM(object):
         self.grad_clip = state['grad_clip']
         self.forward = state['forward']
         self.backward = state['backward']
+        self.fw_pivot = state['fw_pivot']
+        self.bw_pivot = state['bw_pivot']
         self._attention = state['attention']
         self.logit_decider = state['logit_decoder']
 
@@ -151,6 +161,13 @@ class CouplingLSTM(object):
 
     def class_logprob(self, V):
         return logsoftmax(self.logit_decoder(V), axis=-1)
+
+    def _pivot(self, X, mask=None):
+        L, _, _, _ = self.fw_pivot.scanl(X, mask=mask, clip=self.grad_clip)
+        R, _, _, _ = self.bw_pivot.scanr(X, mask=mask, clip=self.grad_clip)
+        pivot = (L[:-2]+R[2:])/2
+        pivot = T.concatenate([R[1:2], pivot, L[-2:-1]], axis=0)
+        return pivot
 
     def transform(self, X, mask=None):
         L,_,_,_ = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
