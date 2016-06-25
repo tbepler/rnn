@@ -157,7 +157,7 @@ class CouplingLSTM(object):
 
     @property
     def weights(self):
-        return self.forward.weights + self.backward.weights + self._attention.weights + self.logit_decoder.weights
+        return self.forward.weights + self.backward.weights + self.fw_pivot.weights + self.bw_pivot.weights + self._attention.weights + self.logit_decoder.weights
 
     def class_logprob(self, V):
         return logsoftmax(self.logit_decoder(V), axis=-1)
@@ -174,7 +174,8 @@ class CouplingLSTM(object):
         R,_,_,_ = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
         #L = theano.gradient.grad_clip(L, -self.grad_clip, self.grad_clip)
         #R = theano.gradient.grad_clip(R, -self.grad_clip, self.grad_clip)
-        _, C = self._attention(L, R, mask=mask)
+        pivot = self._pivot(X, mask=mask)
+        _, C = self._attention(L, R, pivot=pivot, mask=mask)
         return C
 
     def attention(self, X, mask=None):
@@ -182,7 +183,8 @@ class CouplingLSTM(object):
         R,_,_,_ = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
         #L = theano.gradient.grad_clip(L, -self.grad_clip, self.grad_clip)
         #R = theano.gradient.grad_clip(R, -self.grad_clip, self.grad_clip)
-        A, _ = self._attention(L, R, mask=mask)
+        pivot = self._pivot(X, mask=mask)
+        A, _ = self._attention(L, R, pivot=pivot, mask=mask)
         return A
 
     def prior(self, Z):
@@ -209,7 +211,7 @@ class CouplingLSTM(object):
         if mask is not None:
             L *= T.shape_padright(mask)
             C *= T.shape_padright(T.shape_padright(mask))
-        loss = T.sum(L)
+        loss = T.sum(L)/mask.sum()
         if regularize:
             loss += self.regularizer()
         return loss, L, C
