@@ -15,7 +15,7 @@ class Loss(object):
             L *= T.shape_padright(mask)
             C *= T.shape_padright(T.shape_padright(mask))
         n = Yh.shape[0]
-        return L[flank:n-flank], C[flank:n-flank]
+        return L[flank:n-flank], C[flank:n-flank], Yh, Y
 
 class PosteriorCrossEntropy(Loss):
     def decode(self, crf, X, Y):
@@ -96,8 +96,8 @@ class CRF(object):
             x0 = T.shape_padright(x0)
             xt = logsumexp(A+x0, axis=-2) 
             return xt
-        F = theano.scan(step, trans, inits)
-        F = theano.concatenate([inits, F], axis=0)
+        F = theano.scan(step, trans, inits)[0]
+        F = T.concatenate([T.shape_padleft(inits), F], axis=0)
         return F
     
     def backward(self, X):
@@ -106,9 +106,9 @@ class CRF(object):
             xt = xt.dimshuffle(0, 'x', 1)
             x0 = logsumexp(A+xt, axis=-1)
             return x0
-        b_end = T.zeros(trans.shape[:-1])
-        B = theano.scan(step, trans[::-1], b_end)
-        B = theano.concatenate([B[::-1], b_end], axis=0)
+        b_end = T.zeros(trans.shape[1:-1])
+        B = theano.scan(step, trans[::-1], b_end)[0]
+        B = T.concatenate([B[::-1], T.shape_padleft(b_end)], axis=0)
         return B
 
     def posterior(self, X):

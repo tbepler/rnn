@@ -312,11 +312,12 @@ class BLSTM(object):
 class LayeredBLSTM(object):
     def __init__(self, ins, units, layers, **kwargs):
         self.blstms = []
-        for n in range(layers):
-            self.blstms.append(BLSTM(ins, units, **kwargs))
+        self.blstms.append(BLSTM(ins, units, **kwargs))
+        for n in range(layers-1):
+            self.blstms.append(BLSTM(units, units, **kwargs))
 
     @property
-    def weights(self): return th.sum(blstm.weights for blstm in self.blstms)
+    def weights(self): return [blstm.weights for blstm in self.blstms]
 
     @property
     def units(self): return sum(blstm.units for blstm in self.blstms)

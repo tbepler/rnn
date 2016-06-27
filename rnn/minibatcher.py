@@ -11,8 +11,8 @@ class BatchIter(object):
         if self.xydata:
         # if in the form ([X1, X2, X3, ...], [Y1, Y2, Y3, ...]) where each element is batched data, this should separate the data into [X,Y] batches of the form ([X1, Y1], [X2, Y2], ...)
             if self.use_mask:
-                xmask, x = self.mask(data[0])
-                ymask, y = self.mask(data[1])
+                xmask, x = self.masking(data[0])
+                ymask, y = self.masking(data[1])
                 self.mask = zip(xmask, ymask)
             #self.data = np.concatenate((data), axis = 1).resize(data.size/(2*size) + 1,2,size)
             else:
@@ -22,7 +22,7 @@ class BatchIter(object):
             self.data = zip(x, y)
         else:
             if self.use_mask:
-                xmask, x = self.mask(data)
+                xmask, x = self.masking(data)
                 self.mask = xmask
                 self.data = x
             else:
@@ -61,6 +61,9 @@ class BatchIter(object):
         for i in xrange(0, len(self.data), size):
             x, y = zip(*self.data[i:i+size])
             mask = zip(*self.mask[i:i+size])[0]
+            x = np.transpose(x).tolist()
+            y = np.transpose(y).tolist()
+            mask = np.transpose(mask).tolist()
             if self.use_mask:
                 yield x, y, mask 
             else:
@@ -94,7 +97,7 @@ class BatchIter(object):
         #         yield X[:m,:n]
         #     #yield self.X[:,i:i+size], self.mask[:,i:i+size]
 
-    def mask(self, data):
+    def masking(self, data):
         dtype = self.dtype
         batch_count = int(math.ceil(len(data)/float(self.size)))
         rows_needed = batch_count*self.size - len(data)

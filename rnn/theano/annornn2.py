@@ -23,10 +23,10 @@ def null_func(*args, **kwargs):
     pass
 
 class AnnoRNN(object):
-    def __init__(self, n_in, units, layers, labels, loss_scaler, decoder=linear.Linear, itype='int32', solver=solvers.RMSprop(0.01, decay=solvers.GeomDecay(0.999))):
-       self.data = [T.matrix(dtype=itype), T.matrix(dtype=itype)]
-       self.x = self.data[0].astype(itype) # T.matrix(dtype=itype)
-       self.y = self.data[1].astype(itype) # T.matrix(dtype=itype)
+    def __init__(self, n_in, units, layers, labels, decoder=linear.Linear, itype='int32'
+                 , solver=solvers.RMSprop(0.01, decay=solvers.GeomDecay(0.97))):
+       self.x = T.matrix(dtype=itype) # T.matrix(dtype=itype)
+       self.y = T.matrix(dtype=itype) # T.matrix(dtype=itype)
        self.mask = T.matrix(dtype = "int8")
        self.weights = []
        k,b = self.x.shape
@@ -43,7 +43,7 @@ class AnnoRNN(object):
        loss, confusion, lastyh, self.yy= crf_layer.loss(self.yh, self.y)
        self.lastyh = lastyh
        self.count = T.sum(self.mask)
-       self.loss_t = T.sum(loss * T.shape_padright(self.mask) * loss_scaler)/self.count
+       self.loss_t = T.sum(loss * T.shape_padright(self.mask))/self.count
        self.confusion = confusion * T.shape_padright(T.shape_padright(self.mask))
        self.solver = solver
        #compile theano functions
@@ -78,7 +78,7 @@ class AnnoRNN(object):
            
 
 
-    def fit(self, data_train, validate=None, batch_size=256, max_iters=50, callback=null_func):
+    def fit(self, data_train, validate=None, batch_size=256, max_iters=200, callback=null_func):
         steps = self.solver(BatchIter(data_train, batch_size), [self.x, self.y, self.mask], [self.loss_t, self.confusion, self.count], self.weights, max_iters=max_iters)
         #, [self.data, self.mask], self.loss_t, [self.correct, self.count], max_iters=max_iters)
         if validate is not None:
@@ -159,7 +159,9 @@ class AnnoRNN(object):
     def testing(self, data, batch_size = 20):
         testing_out = theano.function([self.x, self.y, self.mask], [self.loss_t, self.confusion, self.count, self.lastyh, self.yy])
         for batch in BatchIter(data, batch_size):
-            loss, confusion, count, yh, yy =  testing_out(batch[0], batch[1], batch[2])
+            loss, confusion, count, yh, yy=  testing_out(batch[0], batch[1], batch[2])
+            print yy
+            print yh
             correct = np.sum([np.trace(square) for row in confusion for square in row])
             print "Batch accuracy:"
             print float(correct)/count
@@ -200,48 +202,57 @@ def import_seq_data(filename):
         # translates the AA sequence into digits
         for char in record.sequence:
             if char in seq_dict:
-                encoded_seq += [seq_dict[char]%6]
+                encoded_seq += [seq_dict[char]]
             else:
                 # if cannot find the AA, then ignore label and sequence
                 changed = False
         if not changed:
             continue
         counter = dict(collections.Counter(labels))
-        frequencies = [counter[i] if i in counter else 0 for i in range(num_labels)]
+        frequencies = [counter[i] if i in counter else 0 for i in range(4)]
+        print collections.Counter(labels)
+        print frequencies
         final_frequencies = map(add, final_frequencies, frequencies)
         label_array.append(labels) 
         sequence_array.append(encoded_seq)
         if record.sequence_length > max_len:
             max_len = record.sequence_length
-    return sequence_array, label_array, num_labels, final_frequencies
+    return sequence_array, label_array, max_len, final_frequencies
 
 if __name__ == '__main__':
-    sequences, ss_labels, labels, label_frequencies = import_seq_data("uniprot_human.txt")
+    sequences, ss_labels, length, label_frequencies = import_seq_data("uniprot_short.txt")
+    print len(sequences[0])
+    print len(ss_labels[0])
     a = np.array(ss_labels)
     print 1-float(sum([c>0 for b in a for c in b]))/sum([len(b)for b in a])
-    samples = 6
+    samples = 20
+    labels = 4
     train_split = 0.7
     total_labels = sum(label_frequencies)
     print label_frequencies
-    loss_scaler = [0 if freq == 0 else float(total_labels)/freq for freq in label_frequencies]
+    loss_scaler = [float(total_labels)/freq for freq in label_frequencies]
     print loss_scaler
-    model = AnnoRNN(samples, 40, 3, labels, label_frequencies)
+    model = AnnoRNN(9, 50, 2, 4)
     # data = np.random.randint(0, labels-1, (length, samples)).astype(np.int32)
     # labeled_data = data
     # print data
     data = np.array([sequences, ss_labels])
-    print data
     #print data.shape
-    train_data, test_data = np.hsplit(data, [int(train_split*data.shape[1])])
+    #train_data, test_data = np.hsplit(data, [int(train_split*data.shape[1])])
     #print train_data.shape
     #print test_data.shape
     #print data
     #iterator = model.batch_iter(data, 64)
     #for i in iterator:
     #    model.fit(i)
-    fit_data = model.fit(train_data, batch_size = 3)
+    data = np.array([[0, 1], [2], [8,1,2,3,3,5,3,7,2], [8,1,2,3,3,5,3,7,2]])
+    data2 = np.array([[0, 1], [2], [0,1,3,1,3,1,3,1,0], [0,1,3,1,3,1,3,1,0]])
+    #data2 = np.array([[3, 0, 0, 0, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 3, 3, 1, 1, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 2, 2, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 3, 3, 3, 3, 0, 0, 0, 0, 0, 3, 2, 2, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3]])
+    #data = np.array([[4, 0, 3, 2, 3, 5, 1, 0, 0, 3, 2, 4, 1, 3, 2, 3, 3, 1, 2, 4, 5, 3, 3, 2, 2, 5, 1, 2, 2, 2, 0, 4, 3, 1, 3, 0, 2, 5, 1, 5, 1, 3, 1, 3, 2, 5, 1, 0, 5, 0, 3, 2, 5, 1, 3, 5, 3, 5, 2, 1, 5, 4, 1, 5, 3, 2, 5, 0, 3, 3, 2, 3, 3, 4, 3, 0, 1, 3, 3, 3, 1, 3, 3, 3, 4, 0, 1, 3, 2, 4, 3, 4, 5, 3, 5, 5, 5, 0, 3, 0, 3, 0, 5, 5, 2, 0, 2, 1, 3, 1, 5, 3, 1, 4, 4, 0, 0, 5, 0, 5, 4, 4, 0, 3, 2, 1, 5, 3, 0, 5, 4, 0, 3, 0, 0, 3, 0, 5, 2, 1, 2, 3, 3, 2, 0, 3, 5, 4, 1, 0, 3, 5, 0, 3, 3, 1, 4, 4, 5, 5, 3, 1, 4, 5, 1, 5, 3, 1, 5, 5, 3, 1, 2, 0, 2, 2, 5, 1, 3, 5, 5, 3, 3, 5, 3, 2, 5, 3, 0, 2, 2, 2, 0, 0, 3, 3, 4, 5, 4, 3, 2, 5, 4, 0, 1, 1, 3, 3, 4, 2, 3, 3, 0, 3, 2, 2, 4, 1, 4, 0, 3, 1, 4, 0, 1, 0, 3, 2, 1, 3, 0, 3, 0, 5, 2, 3, 1, 3, 1, 1, 0, 0, 3, 3, 3, 4, 0, 4, 3, 5, 1, 2, 5, 3, 3, 5, 3, 0, 2, 5, 0, 3, 5, 0, 3, 1, 2, 3, 3, 2, 4, 3, 3, 5, 3, 0, 2, 5, 3, 2, 4, 5, 5, 4, 3, 0, 3, 3, 0, 3, 3, 0, 2, 3, 0, 5, 3, 3, 5, 1, 3, 4, 3, 5, 2, 3, 5, 2, 3, 2, 5, 4, 5, 2, 3, 4, 2, 2, 2, 4, 3, 5, 3, 4, 3, 2, 0, 2, 4, 0, 0, 5, 2, 2, 3, 5, 2, 2, 3, 4, 2, 5, 2, 3, 2, 3, 2, 4, 0, 3, 1, 3, 0, 1, 2, 4, 3, 3, 3, 5, 1, 3, 1, 1, 2, 3, 5, 2, 1, 4, 4, 3, 1, 1, 1, 3, 3, 1, 2, 5, 2, 1, 1, 0, 0, 3, 0, 3, 5, 3, 5, 3, 3, 3, 3, 2, 3, 1, 0, 1, 3, 1, 0, 5, 4, 4, 2, 4, 5, 3, 3, 3, 5, 4, 1, 0, 5, 1, 4, 3, 3, 3, 1, 5, 3, 2, 2, 3, 2, 2, 2, 1, 1, 3, 4, 4, 1, 5, 1, 3, 3, 0, 3, 3, 5, 0, 3, 3, 1, 4, 1, 0, 0, 3, 5, 2, 1, 1, 3, 1, 5, 1, 2, 5, 1, 2, 3, 0, 0, 1, 3, 3, 1, 3, 5, 3, 1, 4, 0, 4, 1, 2, 3, 1, 0, 3, 3, 3, 4, 3, 3, 4, 1, 1, 1, 1, 2, 1, 1, 2, 1, 5, 0, 3, 2, 3, 1, 0, 1, 4, 1, 3, 0, 5, 2, 0, 4, 0, 5, 2, 5, 3, 1, 1, 3, 3, 2, 0, 1, 2, 0, 2, 5, 3, 1, 1, 3, 5, 1, 2, 2, 1, 2, 4, 5, 0, 1, 3, 3, 2, 3, 3, 0, 1, 2, 0, 3, 5, 4, 0, 2, 0, 2, 4, 3, 3, 3, 4, 3, 5, 5, 3, 3, 3, 3, 2, 1, 4, 4, 4, 5, 4, 5, 4, 1, 3, 1, 5, 0, 4, 2]])  
+    data = np.array([data, data2])
+    fit_data = model.fit(data, batch_size = 2)
     for i in fit_data:
         print i
     print "Begin testing"
-    test_data = model.testing(test_data, batch_size = 3)
+    test_data = model.testing(data, batch_size = 2)
     print test_data
