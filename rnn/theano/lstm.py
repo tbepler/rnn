@@ -7,18 +7,18 @@ from rnn.initializers import orthogonal
 
 def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmoid, gact=fast_tanh
         , cact=fast_tanh, mask=None, activation=lambda x: x, clip=None):
-    m = y0.shape[1]
+    m = y0.shape[-1]
     ifog = ifog + th.dot(y0, wy)
-    i = iact(ifog[:,:m])
-    f = fact(ifog[:,m:2*m])
-    o = oact(ifog[:,2*m:3*m])
-    g = gact(ifog[:,3*m:])
+    i = iact(ifog.T[:m].T)
+    f = fact(ifog.T[m:2*m].T)
+    o = oact(ifog.T[2*m:3*m].T)
+    g = gact(ifog.T[3*m:].T)
     c = c0*f + i*g
     if clip is not None:
         c = theano.gradient.grad_clip(c, -clip, clip)
     y = activation(o*cact(c))
     if mask is not None:
-        mask = mask.dimshuffle(0, 'x')
+        mask = th.shape_padright(mask)
         y = y*mask + y0*(1-mask)
         c = c*mask + c0*(1-mask)
     return y, c
@@ -147,9 +147,9 @@ class LSTM(object):
         init(w[1:])
         self.ws = theano.shared(w, name=name, borrow=True)
         #self.c0 = theano.shared(np.zeros(units,dtype=dtype),borrow=True)
-        self.c0 = th.zeros((1,units))
+        self.c0 = th.zeros(units)
         #self.y0 = theano.shared(np.zeros(units,dtype=dtype),borrow=True)
-        self.y0 = th.zeros((1,units))
+        self.y0 = th.zeros(units)
         self.name = name
         self.iact = iact
         self.fact = fact
@@ -176,9 +176,9 @@ class LSTM(object):
         self.name = state['name']
         self.ws = theano.shared(state['weights'], borrow=True)
         #self.c0 = theano.shared(state['c0'], borrow=True)
-        self.c0 = th.zeros((1,state['weights'].shape[1]//4))
+        self.c0 = th.zeros(state['weights'].shape[1]//4)
         #self.y0 = theano.shared(state['y0'], borrow=True)
-        self.y0 = th.zeros((1,state['weights'].shape[1]//4))
+        self.y0 = th.zeros(state['weights'].shape[1]//4)
         acts = state['activations']
         self.iact = acts[0]
         self.fact = acts[1]
@@ -186,57 +186,61 @@ class LSTM(object):
         self.gact = acts[3]
         self.cact = acts[4]
 
-    def scanl(self, x, y0=None, c0=None, mask=None, **kwargs):
+    def build_init_states(self, x, y0, c0):
+        if 'int' in x.dtype:
+            shape = x.shape[1:]
+        else:
+            shape = x.shape[1:-1]
+        z = th.shape_padright(th.zeros(shape))
         if y0 is None:
-            #y0 = self.cact(self.y0)
-            y0 = th.ones((x.shape[1],1))*self.y0
+            y0 = self.y0
         if c0 is None:
-            c0 = th.ones((x.shape[1],1))*self.c0
+            c0 = self.c0
+        return z+y0, z+c0
+
+    def scanl(self, x, y0=None, c0=None, mask=None, **kwargs):
+        y0, c0 = self.build_init_states(x, y0, c0)
         return scanl(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
     def scanr(self, x, y0=None, c0=None, mask=None, **kwargs):
-        if y0 is None:
-            #y0 = self.cact(self.y0)
-            y0 = th.ones((x.shape[1],1))*self.y0
-        if c0 is None:
-            c0 = th.ones((x.shape[1],1))*self.c0
+        y0, c0 = self.build_init_states(x, y0, c0)
         return scanr(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
     def foldl(self, x, y0=None, c0=None, mask=None, **kwargs):
         if y0 is None:
             #y0 = self.cact(self.y0)
-            y0 = self.y0
+            y0 = th.zeros(x.shape[1:]) + self.y0
         if c0 is None:
-            c0 = self.c0
+            c0 = th.zeros(x.shape[1:]) + self.c0
         return foldl(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
     def foldr(self, x, y0=None, c0=None, mask=None, **kwargs):
         if y0 is None:
             #y0 = self.cact(self.y0)
-            y0 = self.y0
+            y0 = th.zeros(x.shape[1:]) + self.y0
         if c0 is None:
-            c0 = self.c0
+            c0 = th.zeros(x.shape[1:]) + self.c0
         return foldr(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
 
     def unfoldl(self, x, steps, y0=None, c0=None, **kwargs):
         if y0 is None:
             #y0 = self.cact(self.y0)
-            y0 = self.y0
+            y0 = th.zeros(x.shape) + self.y0
         if c0 is None:
-            c0 = self.c0
+            c0 = th.zeros(x.shape) + self.c0
         return unfoldl(self.ws, y0, c0, x, steps, iact=self.iact, fact=self.fact, oact=self.oact
                 , gact=self.gact, cact=self.cact, **kwargs)
 
     def unfoldr(self, x, steps, y0=None, c0=None, **kwargs):
         if y0 is None:
             #y0 = self.cact(self.y0)
-            y0 = self.y0
+            y0 = th.zeros(x.shape) + self.y0
         if c0 is None:
-            c0 = self.c0
+            c0 = th.zeros(x.shape) + self.c0
         return unfoldr(self.ws, y0, c0, x, steps, iact=self.iact, fact=self.fact, oact=self.oact
                 , gact=self.gact, cact=self.cact, **kwargs)
 
@@ -264,7 +268,7 @@ class LayeredLSTM(object):
             i = 0
             for lstm in lstms:
                 n = lstm.units
-                splits.append(vector[:,i:i+n])
+                splits.append(vector.T[i:i+n].T)
                 i += n
             return splits
         else:
@@ -300,11 +304,11 @@ class BLSTM(object):
     def __init__(self, ins, units, **kwargs):
         self.nl = units // 2 + units % 2
         self.nr = units // 2
-        self.lstml = LSTM(ins, nl, **kwargs)
-        self.lstmr = LSTM(ins, nr, **kwargs)
+        self.lstml = LSTM(ins, self.nl, **kwargs)
+        self.lstmr = LSTM(ins, self.nr, **kwargs)
 
     @property
-    def weights(self): return self.lstml.weights + self.lsmtr.weights
+    def weights(self): return self.lstml.weights + self.lstmr.weights
 
     @property
     def units(self): return self.nl + self.nr
@@ -335,7 +339,8 @@ class LayeredBLSTM(object):
             ins = n
 
     @property
-    def weights(self): return sum(blstm.weights for blstm in self.blstms)
+    def weights(self): 
+        return [w for blstm in self.blstms for w in blstm.weights]
 
     @property
     def units(self): return sum(blstm.units for blstm in self.blstms)
