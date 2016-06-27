@@ -70,50 +70,21 @@ class Attention(object):
         self.W = theano.shared(state['W'], borrow=True)
         
     def __call__(self, L, R, pivot=None, mask=None):
-        #L = L / T.sqrt(T.sum(L**2, axis=-1, keepdims=True))
-        #L = normalize(L, axis=-1)
-        #R = R / T.sqrt(T.sum(R**2, axis=-1, keepdims=True))
-        #R = normalize(R, axis=-1)
         if pivot is None:
             pivot = (L[:-2]+R[2:])/2
             pivot = T.concatenate([R[1:2], pivot, L[-2:-1]], axis=0)
-        #pivot = pivot / T.sqrt(T.sum(pivot**2, axis=-1, keepdims=True))
-        #pivot = normalize(pivot, axis=-1)
-        #W = dampen(T.dot(pivot, self.W))
         W = T.dot(pivot, self.W)
-        """
-        I = T.arange(L.shape[0])
-        def f(i):
-            A = L*T.shape_padright(T.shape_padright(I<i)) + R*T.shape_padright(T.shape_padright(I>i))
-            P = T.sum(A*W[i], axis=-1)
-            P = T.set_subtensor(P[i], float('-inf'))
-            if mask is not None:
-                P += T.log(mask)
-            P = softmax(P, axis=0)
-            C = T.sum(A*T.shape_padright(P), axis=0)
-            return P, C
-
-        [P,C], _ = theano.map(f, I) 
-        return P, C
-        """
         i = T.shape_padright(T.arange(L.shape[0]))
         I = T.shape_padright(T.shape_padright(i.T < i))
         J = T.shape_padright(T.shape_padright(i.T > i))
         A = L*I + R*J
-        #A = A.dimshuffle(0,2,1,3)
-        #P = dampen(T.dot(A, W))
         P = T.sum(A*W, axis=-1)
-        #P = T.log(T.nnet.relu(T.sum(A*W, axis=-1))+1)
         i = T.arange(L.shape[0])
         P = T.set_subtensor(P[i,i], float('-inf'))
         if mask is not None:
             P += T.log(mask)
-            #P *= mask
         P = softmax(P, axis=1)
-        #C = T.dot(A, P)
         C = T.sum(A*T.shape_padright(P), axis=1)
-        #C = normalize(C)
-        #C = C / T.sqrt(T.sum(C**2, axis=-1, keepdims=True))
         return P, C
 
 class RecurrentAttention(object):
@@ -157,7 +128,8 @@ class CouplingLSTM(object):
         self.grad_clip = grad_clip
         self.forward = LayeredLSTM(n_in, layers+[n_components])
         self.backward = LayeredLSTM(n_in, layers+[n_components])
-        self._attention = RecurrentAttention(n_components, atten_layers)
+        #self._attention = RecurrentAttention(n_components, atten_layers)
+        self._attention = Attention(n_components)
         self.logit_decoder = Linear(n_components, n_in)
 
     def __getstate__(self):
