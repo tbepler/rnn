@@ -16,14 +16,28 @@ def dampen(x):
     # preserves full range, but dampens the gradient
     return T.sgn(x)*T.log(abs(x)+1)
 
+def sigmoid(x):
+    return T.tanh(x)/2 + 0.5
+
 class LSTMStack(object):
-    def __init__(self, n_in, n_topics, layers=[]):
+    def __init__(self, n_in, n_components, layers=[], **kwargs):
         if len(layers) > 0:
-            self.stack = LayeredLSTM(n_in, layers)
+            self.stack = LayeredLSTM(n_in, layers
+                    , iact=sigmoid
+                    , fact=sigmoid
+                    , oact=sigmoid
+                    , gact=T.tanh
+                    , cact=T.tanh)
             n_in = layers[-1]
         else:
             self.stack = None
-        self.top = LSTM(n_in, n_topics) #, gact=dampen, cact=dampen)
+        self.top = LSTM(n_in, n_components
+                , iact=sigmoid
+                , fact=sigmoid
+                , oact=sigmoid
+                , gact=T.tanh
+                , cact=T.tanh
+                , **kwargs)
 
     @property
     def weights(self):
@@ -35,12 +49,12 @@ class LSTMStack(object):
 
     def scanl(self, X, **kwargs):
         if self.stack is not None:
-            X, _, _, _ = self.stack.scanl(X, **kwargs)
+            X, _, _, _ = self.stack.scanl(X)
         return self.top.scanl(X, **kwargs)
 
     def scanr(self, X, **kwargs):
         if self.stack is not None:
-            X, _, _, _ = self.stack.scanr(X, **kwargs)
+            X, _, _, _ = self.stack.scanr(X)
         return self.top.scanr(X, **kwargs)
 
 def normalize(X, axis=-1):
@@ -71,54 +85,82 @@ class Attention(object):
         
     def __call__(self, L, R, pivot=None, mask=None):
         if pivot is None:
-            pivot = (L[:-2]+R[2:])/2
+            L = normalize(L)
+            R = normalize(R)
+            pivot = normalize(L[:-2]+R[2:])
             pivot = T.concatenate([R[1:2], pivot, L[-2:-1]], axis=0)
         W = T.dot(pivot, self.W)
         i = T.shape_padright(T.arange(L.shape[0]))
         I = T.shape_padright(T.shape_padright(i.T < i))
         J = T.shape_padright(T.shape_padright(i.T > i))
         A = L*I + R*J
-        P = T.sum(A*W, axis=-1)
+        P = T.sum(A*W.dimshuffle(0,'x',1,2), axis=-1)
+        #P = T.log1p(T.nnet.relu(P))
         i = T.arange(L.shape[0])
         P = T.set_subtensor(P[i,i], float('-inf'))
         if mask is not None:
             P += T.log(mask)
+        #    P *= mask
         P = softmax(P, axis=1)
         C = T.sum(A*T.shape_padright(P), axis=1)
-        return P, C
-
+        #return P/T.maximum(P.sum(axis=1, keepdims=True), 1e-38), C
+        return P, normalize(C)
+        #return T.zeros(A.shape), pivot
+        
 class RecurrentAttention(object):
-    def __init__(self, n_in, layers):
-        w = np.random.randn(layers[-1]).astype(theano.config.floatX)
-        w = w/np.sqrt(np.sum(w**2))
+    def __init__(self, n_in, n_out):
+        w = np.random.randn(n_out, n_out).astype(theano.config.floatX)
+        orthogonal(w)
         self.W = theano.shared(w, borrow=True)
-        self.blstm = LayeredBLSTM(n_in, layers)
+        u = np.random.randn(n_out, n_out).astype(theano.config.floatX)
+        orthogonal(u)
+        self.U = theano.shared(u, borrow=True)
+        v = np.random.randn(n_out).astype(theano.config.floatX)
+        v /= T.sqrt(T.sum(v**2))
+        self.v = theano.shared(v, borrow=True)
+        self.left = LSTMStack(n_in, n_out, []) 
+        self.right = LSTMStack(n_in, n_out, [])
 
     @property
     def weights(self):
-        return [self.W] + self.blstm.weights
+        return [self.W, self.U, self.v] + self.left.weights + self.right.weights
 
     def __getstate__(self):
-        return {'W': self.W.get_value(borrow=True), 'blstm': self.blstm}
+        state = {}
+        state['W'] = self.W.get_value(borrow=True)
+        state['U'] = self.U.get_value(borrow=True)
+        state['v'] = self.v.get_value(borrow=True)
+        state['left'] = self.left
+        state['right'] = self.right
+        return state
 
     def __setstate__(self, state):
         self.W = theano.shared(state['W'], borrow=True)
-        self.blstm = state['blstm']
+        self.U = theano.shared(state['U'], borrow=True)
+        self.v = theano.shared(state['v'], borrow=True)
+        self.left = state['left']
+        self.right = state['right']
         
-    def __call__(self, L, R, mask=None):
+    def decoder_state(self, X, mask=None):
+        L = self.left.scanl(X, mask=mask)
+        R = self.right.scanr(X, mask=mask)
+        S = (L[:-2]+R[2:])/2
+        return T.concatenate([R[1:2], S, L[-2:-1]], axis=0)
+
+    def __call__(self, X, L, R, mask=None):
         i = T.shape_padright(T.arange(L.shape[0]))
         I = T.shape_padright(T.shape_padright(i < i.T))
         J = T.shape_padright(T.shape_padright(i > i.T))
-        A = L*I + R*J
-        Z = self.blstm.scan(A, mask=mask)
-        P = Z.dot(self.W)
+        H = L*I + R*J
+        S = self.decoder_state(X, mask=mask) 
+        A = T.tanh(H.dot(self.W) + S.dot(self.U).dimshuffle(0, 'x', 1, 2)).dot(self.v)
         i = T.arange(L.shape[0])
-        P = T.set_subtensor(P[i,i], float('-inf'))
+        A = T.set_subtensor(A[i,i], float('-inf'))
         if mask is not None:
-            P += T.log(mask.dimshuffle(0,'x',1))
-        P = softmax(P, axis=0)
-        C = T.sum(A*T.shape_padright(P), axis=0)
-        return P.dimshuffle(1, 0, 2), C
+            A += T.log(mask)
+        A = softmax(A, axis=1)
+        C = T.sum(H*T.shape_padright(A), axis=1)
+        return A, C
 
 class CouplingLSTM(object):
     def __init__(self, n_in, n_components, layers=[], atten_layers=[], weights_r2=0.01, grad_clip=None):
@@ -126,10 +168,12 @@ class CouplingLSTM(object):
         self.n_components = n_components
         self.weights_r2 = weights_r2
         self.grad_clip = grad_clip
-        self.forward = LayeredLSTM(n_in, layers+[n_components])
-        self.backward = LayeredLSTM(n_in, layers+[n_components])
+        self.forward = LSTMStack(n_in, n_components, layers)
+        self.backward = LSTMStack(n_in, n_components, layers)
+        #self.fw_pivot = LayeredLSTM(n_in, layers+[n_components])
+        #self.bw_pivot = LayeredLSTM(n_in, layers+[n_components])
         #self._attention = RecurrentAttention(n_components, atten_layers)
-        self._attention = Attention(n_components)
+        self._attention = RecurrentAttention(n_components)
         self.logit_decoder = Linear(n_components, n_in)
 
     def __getstate__(self):
@@ -140,6 +184,8 @@ class CouplingLSTM(object):
         state['grad_clip'] = self.grad_clip
         state['forward'] = self.forward
         state['backward'] = self.backward
+        #state['fw_pivot'] = self.fw_pivot
+        #state['bw_pivot'] = self.bw_pivot
         state['attention'] = self._attention
         state['logit_decoder'] = self.logit_decoder
         return state
@@ -151,6 +197,8 @@ class CouplingLSTM(object):
         self.grad_clip = state['grad_clip']
         self.forward = state['forward']
         self.backward = state['backward']
+        #self.fw_pivot = state['fw_pivot']
+        #self.bw_pivot = state['bw_pivot']
         self._attention = state['attention']
         self.logit_decider = state['logit_decoder']
 
@@ -165,24 +213,28 @@ class CouplingLSTM(object):
     def _pivot(self, X, mask=None):
         L, _, _, _ = self.fw_pivot.scanl(X, mask=mask, clip=self.grad_clip)
         R, _, _, _ = self.bw_pivot.scanr(X, mask=mask, clip=self.grad_clip)
-        pivot = (L[:-2]+R[2:])/2
+        pivot = (L[:-2]+R[2:])
         pivot = T.concatenate([R[1:2], pivot, L[-2:-1]], axis=0)
-        return pivot
+        return normalize(pivot)
 
     def transform(self, X, mask=None):
-        L,_,_,_ = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
-        R,_,_,_ = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
+        #L,_ = self.forward.scanl(X, mask=mask, clip=self.grad_clip, activation=normalize)
+        #R,_ = self.backward.scanr(X, mask=mask, clip=self.grad_clip, activation=normalize)
+        L,_ = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
+        R,_ = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
         #pivot = self._pivot(X, mask=mask)
         #_, C = self._attention(L, R, pivot=pivot, mask=mask)
-        _, C = self._attention(L, R, mask=mask)
+        _, C = self._attention(X, L, R, mask=mask)
         return C
 
     def attention(self, X, mask=None):
-        L,_,_,_ = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
-        R,_,_,_ = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
+        #L,_ = self.forward.scanl(X, mask=mask, clip=self.grad_clip, activation=normalize)
+        #R,_ = self.backward.scanr(X, mask=mask, clip=self.grad_clip, activation=normalize)
+        L,_ = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
+        R,_ = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
         #pivot = self._pivot(X, mask=mask)
         #A, _ = self._attention(L, R, pivot=pivot, mask=mask)
-        A, _ = self._attention(L, R, mask=mask)
+        A, _ = self._attention(X, L, R, mask=mask)
         return A
 
     def prior(self, Z):
@@ -193,7 +245,7 @@ class CouplingLSTM(object):
     def regularizer(self):
         loss = 0
         for w in self.weights:
-            loss += self.weights_r2*T.sum(w*w)
+            loss += self.weights_r2*T.sum(w**2)
         return loss
     
     def _loss(self, X, mask=None, flank=0, regularize=True):
