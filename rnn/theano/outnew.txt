@@ -1,0 +1,24 @@
+0.826046074283
+[1757, 220, 146, 4]
+[1.2105862265224816, 9.668181818181818, 14.568493150684931, 531.75]
+Inputs: 3
+Layers: 2
+Units: 40
+Data preprocessing time: 0:00:00.308064
+Model construction time: 0:00:00.000006
+Begin training
+Here
+<TensorType(float64, scalar)>
+[<TensorType(int32, matrix)>, <TensorType(int32, matrix)>, <TensorType(int8, matrix)>]
+[Elemwise{true_div,no_inplace}.0, Elemwise{mul,no_inplace}.0, Sum{acc_dtype=int64}.0]
+[(<TensorType(float64, matrix)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, vector)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, 3D)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, vector)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, 3D)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{sub,no_inplace}.0), (<TensorType(float64, vector)>, Elemwise{sub,no_inplace}.0), (<TensorType(float64, 3D)>, Elemwise{sub,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{sub,no_inplace}.0)]
+Epoch 1
+OrderedDict([('Loss', 0.5583858458943568), ('Accuracy', 0.6299019607843137)])
+Training time: 0:00:14.203225
+[ 0.04735729  0.00266085  0.04736032  0.00263985  0.00263994  0.04736013
+  0.04736056  0.04736032  0.00263994  0.00263978  0.04736037  0.04735187
+  0.00263976  0.00264004  0.04735909  0.00263951  0.00263952  0.00264318
+  0.00265262  0.04735897  0.04735739  0.00263945  0.00263975  0.00264152
+  0.04735925  0.04736055  0.00264009  0.0026395   0.04736     0.04736054
+  0.00263974  0.00264267  0.04736025  0.04735506  0.04736048  0.00264
+  0.04736034  0.00263953  0.04736044  0.04736047]

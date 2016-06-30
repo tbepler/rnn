@@ -35,9 +35,9 @@ class AnnoRNN(object):
        k,b = self.x.shape
        y_layer = self.x
        #self.y_layers = []
-       layer = lstm.LayeredBLSTM(n_in, units, layers)
-       self.weights += [weight for weights in layer.weights for weight in weights]
-       y_layer = layer.scan(self.x, self.mask)
+       lstm_layer = lstm.DiffLSTM(n_in, units)
+       self.weights += [weight for weight in lstm_layer.weights]
+       y_layer, c = lstm_layer.scan(self.x, self.mask)
        #self.y_layers.append(y_layer)
        self.yh = y_layer
        crf_layer = crf.CRF(units, labels, loss = crf.LikelihoodAccuracy())
@@ -49,6 +49,7 @@ class AnnoRNN(object):
        self.loss_t = T.sum(loss * T.shape_padright(self.mask) * loss_scaler)/self.count
        self.confusion = confusion * T.shape_padright(T.shape_padright(self.mask))
        self.solver = solver
+       self.difflayers = [lstm_layer, crf_layer]
        #compile theano functions
        #self._loss = theano.function([self.data, self.mask], [self.loss_t, self.correct, self.count])
        #self._activations = theano.function([self.data], self.y_layers+[self.yh], givens={self.x:self.data})
@@ -81,8 +82,8 @@ class AnnoRNN(object):
            
 
 
-    def fit(self, data_train, validate=None, batch_size=256, max_iters=10, callback=null_func):
-        steps = self.solver(BatchIter(data_train, batch_size), [self.x, self.y, self.mask], [self.loss_t, self.confusion, self.count], self.weights, max_iters=max_iters)
+    def fit(self, data_train, validate=None, batch_size=256, max_iters=20, callback=null_func):
+        steps = self.solver(BatchIter(data_train, batch_size), [self.x, self.y, self.mask, self.difflayers], [self.loss_t, self.confusion, self.count], self.weights, max_iters=max_iters)
         #, [self.data, self.mask], self.loss_t, [self.correct, self.count], max_iters=max_iters)
         if validate is not None:
             validate = BatchIter(validate, batch_size, shuffle=False)
@@ -225,17 +226,17 @@ def import_seq_data(filename):
 if __name__ == '__main__':
     currentTime = datetime.now() 
     startTime = currentTime
-    orig_stdout = sys.stdout
-    f = file('out2.txt', 'w')
-    sys.stdout = f
+    #orig_stdout = sys.stdout
+    #f = file('outnew.txt', 'w')
+    #sys.stdout = f
 
-    sequences, ss_labels, labels, label_frequencies = import_seq_data("uniprot_human.txt")
+    sequences, ss_labels, labels, label_frequencies = import_seq_data("uniprot_short.txt")
     a = np.array(ss_labels)
     print 1-float(sum([c>0 for b in a for c in b]))/sum([len(b)for b in a])
     samples = 20
     train_split = 0.7
     layers = 2
-    units = 40
+    units = 2
     total_labels = sum(label_frequencies)
     print label_frequencies
     loss_scaler = [0 if freq == 0 else float(total_labels)/freq for freq in label_frequencies]
@@ -244,7 +245,7 @@ if __name__ == '__main__':
     # data = np.random.randint(0, labels-1, (length, samples)).astype(np.int32)
     # labeled_data = data
     # print data
-    data = np.array([sequences, ss_labels])
+    data = np.array([sequences, ss_labels])[:, :10]
     print "Inputs: %d" % len(data[0])
     print "Layers: %d" % layers
     print "Units: %d" % units
@@ -259,7 +260,7 @@ if __name__ == '__main__':
     print "Data preprocessing time: %s" % (datetime.now() - currentTime)
     currentTime = datetime.now()
 
-    fit_data = model.fit(train_data, batch_size = 100)
+    fit_data = model.fit(train_data, batch_size = 10)
 
     print "Model construction time: %s" % (datetime.now() - currentTime)
     currentTime = datetime.now()
@@ -274,10 +275,11 @@ if __name__ == '__main__':
         currentTime = datetime.now()
 
     print "Begin testing"
-    test_data = model.testing(test_data, batch_size = 100)
+    test_data = model.testing(test_data, batch_size = 10)
     print test_data
     print "Testing time: %s" % (datetime.now() - currentTime)
     currentTime = datetime.now()
     print "Total runtime: %s" % (datetime.now() - startTime) 
 
     sys.stdout = orig_stdout
+    f.close()

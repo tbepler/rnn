@@ -164,6 +164,21 @@ class LSTM(object):
     @property
     def units(self): return self.ws.get_value(borrow=True).shape[1]//4
 
+    def delete(self, del_units):
+        weights = self.ws.get_value()
+        unit_count = self.units
+        for unit in del_units:
+            for i in range(3,-1,-1):
+                weights = np.delete(weights, i*unit_count + unit, 1)
+            unit_count -= 1
+        self.ws.set_value(weights)
+
+    def add(self, add_units):
+        weights = self.ws.get_value()
+        for i in range (4, 0, -1):
+            weights = np.insert(weights, i*self.units, np.random.rand(add_units, weights.shape[0]), axis = 1)
+        self.ws.set_value(weights)
+
     def __getstate__(self):
         state = {}
         state['name'] = self.name
@@ -338,4 +353,75 @@ class LayeredBLSTM(object):
             x = blstm.scan(x, **kwargs)
         return x
 
+class DiffLSTM(object):
+    def __init__(self, ins, units, Td=0.05, k=1, Mmin=0.025, Padd=0.5, Pdel=0.25, **kwargs):
+        self.lstm = LSTM(ins, units, **kwargs)
+        self.Td = Td # Deletion Threshold - if falls below threshold then marked for possible deletion
+        self.k = k # Number of units with multiplier below threshold (will adjust number of units if less/more than k)
+        self.Mmin = Mmin # The minimum that a multiplier can be
+        self.Padd = Padd # Probability that a unit to be added is added
+        self.Pdel = Pdel # Probabiiity that a unit to be deleted is deleted
+        self.multiplier = theano.shared(np.ones((units))*self.Td)
 
+    @property
+    def units(self): return self.lstm.units
+
+    @property
+    def weights(self): return self.lstm.weights + [self.multiplier]
+
+    def update(self):
+        multip = np.absolute(self.multiplier.get_value())
+        print multip
+        below_threshold = []
+        for i in range(len(multip)):
+            if multip[i] < self.Td:
+                below_threshold += [i]
+            if multip[i] < self.Mmin:
+                multip[i] = self.Mmin
+        diff = self.k - len(below_threshold)
+        del_units = []
+        if diff < 0:
+            below_threshold = np.array(below_threshold)
+            np.random.shuffle(below_threshold)
+            print below_threshold
+            potential_remove = below_threshold[:-diff]
+            # Preserve potentially removed unit with probability 1-Pdel
+            for i in potential_remove:
+            	if np.random.rand() < self.Pdel:
+                    del_units.append(i)
+            if del_units != []:
+                self.delete(del_units)
+        add_units = 0
+        if diff > 0:
+            for i in range(diff):
+                # Adds unit with probability Padd
+                if np.random.rand() < self.Padd:
+                    add_units += 1
+            if add_units > 0:
+                self.add(add_units)
+        #returns list of units to be deleted and number of units to be added to end (to inform next layer of unit change)
+        if del_units != []:
+            return del_units
+        else:
+            return add_units
+
+    # Deletes selected units from multiplier and lstm layer
+    def delete(self, del_units):
+        multip = self.multiplier.get_value()
+        for i in del_units:
+            np.delete(multip,i,0)
+        self.multiplier.set_value(multip)
+        self.lstm.delete(del_units)
+
+    # Adds units to multiplier and lstm layer
+    def add(self, add_units):
+        multip = self.multiplier.get_value()
+        print multip
+        print np.array([self.Td] * add_units)
+        multip = np.concatenate((multip, np.array([self.Td] * add_units)))
+        self.multiplier.set_value(multip)
+        self.lstm.add(add_units)
+
+    def scan(self, x, y0=None, c0=None, mask=None, **kwargs):
+	y, c = self.lstm.scanl(x, mask = mask, **kwargs)
+	return y * abs(self.multiplier), c

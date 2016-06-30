@@ -55,6 +55,8 @@ class SGD(object):
     def __call__(self, data, inputs, outputs, weights, grads=None, max_iters=-1):
         if grads is None:
             grads = theano.grad(outputs[0], weights)
+        layers = inputs[-1]
+        inputs = inputs[:-1]
         f = self._compile(inputs, outputs, weights, grads)
         n = len(data)
         i = 0
@@ -67,6 +69,9 @@ class SGD(object):
                 yield i+j/n, ret
             i += 1
             self.learning_rate = self.decay(self.learning_rate)
+            change = layers[0].update()
+            if change != 0:
+                layers[1].update(change)
 
 class RMSprop(SGD):
     def __init__(self, lr, rho=0.95, eps=1e-5, momentum=0.9, decay=NoDecay()):

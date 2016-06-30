@@ -86,6 +86,13 @@ class CRF(object):
         self.w_trans.set_value(ws[0])
         self.w_init.set_value(ws[1])
 
+    def update(self, change):
+        if change is int:
+        # Adding unit
+        else:
+        # Removing unit
+            
+
     def loss(self, X, Y, **kwargs):
         return self._loss(self, X, Y, **kwargs)
 
