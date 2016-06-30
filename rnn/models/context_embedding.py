@@ -188,7 +188,7 @@ class ContextEmbedding(object):
                 train_res = [0 for _ in res]
             for i in xrange(len(res)):
                 train_res[i] += res[i]
-            if it - last_yield > yield_every:
+            if it - last_yield >= yield_every:
                 last_yield = it
                 if validate is not None:
                     val_res = self.loss(validate, callback=callback)
