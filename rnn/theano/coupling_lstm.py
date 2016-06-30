@@ -116,7 +116,7 @@ class RecurrentAttention(object):
         orthogonal(u)
         self.U = theano.shared(u, borrow=True)
         v = np.random.randn(n_out).astype(theano.config.floatX)
-        v /= T.sqrt(T.sum(v**2))
+        v /= np.sqrt(np.sum(v**2))
         self.v = theano.shared(v, borrow=True)
         self.left = LSTMStack(n_in, n_out, []) 
         self.right = LSTMStack(n_in, n_out, [])
@@ -142,8 +142,8 @@ class RecurrentAttention(object):
         self.right = state['right']
         
     def decoder_state(self, X, mask=None):
-        L = self.left.scanl(X, mask=mask)
-        R = self.right.scanr(X, mask=mask)
+        L, _ = self.left.scanl(X, mask=mask)
+        R, _ = self.right.scanr(X, mask=mask)
         S = (L[:-2]+R[2:])/2
         return T.concatenate([R[1:2], S, L[-2:-1]], axis=0)
 
@@ -173,7 +173,7 @@ class CouplingLSTM(object):
         #self.fw_pivot = LayeredLSTM(n_in, layers+[n_components])
         #self.bw_pivot = LayeredLSTM(n_in, layers+[n_components])
         #self._attention = RecurrentAttention(n_components, atten_layers)
-        self._attention = RecurrentAttention(n_components)
+        self._attention = RecurrentAttention(n_in, n_components)
         self.logit_decoder = Linear(n_components, n_in)
 
     def __getstate__(self):
