@@ -121,7 +121,7 @@ def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
         #y, c = ifelse(peel > 0, (th.concatenate([ypeel, y], axis=0), th.concatenate([cpeel, c], axis=0)), (y,c))
     else:
         #from theano.compile.nanguardmode import NanGuardMode
-        #mode = NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True)
+        #mode = NanGuardMode(nan_is_error=True, inf_is_error=False, big_is_error=False)
         #[y, c], _ = op(f, seqs, [y0, c0], non_sequences=wy, mode=mode)
         [y, c], _ = op(f, seqs, [y0, c0], non_sequences=wy)
     return y, c

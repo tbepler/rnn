@@ -17,7 +17,8 @@ def dampen(x):
     return T.sgn(x)*T.log(abs(x)+1)
 
 def sigmoid(x):
-    return T.tanh(x)/2 + 0.5
+    return T.nnet.sigmoid(x)
+    #return T.tanh(x)/2 + 0.5
 
 class LSTMStack(object):
     def __init__(self, n_in, n_components, layers=[], **kwargs):

@@ -45,6 +45,9 @@ class SGD(object):
     def _compile(self, inputs, outputs, weights, grads):
         learning_rate = th.scalar()
         updates = self._updates(weights, grads, learning_rate)
+        #from theano.compile.nanguardmode import NanGuardMode
+        #mode = NanGuardMode(nan_is_error=True, big_is_error=False, inf_is_error=False)
+        #return theano.function([learning_rate]+inputs, outputs, updates=updates, mode=mode)
         return theano.function([learning_rate]+inputs, outputs, updates=updates)
 
     def __call__(self, data, inputs, outputs, weights, grads=None, max_iters=-1):
