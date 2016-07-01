@@ -18,9 +18,12 @@ def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmo
         c = theano.gradient.grad_clip(c, -clip, clip)
     y = activation(o*cact(c))
     if mask is not None:
-        mask = th.shape_padright(mask)
-        y = y*mask + y0*(1-mask)
-        c = c*mask + c0*(1-mask)
+        #mask = th.shape_padright(mask)
+        I = (1-mask).nonzero()
+        y = th.set_subtensor(y[I], y0[I])
+        c = th.set_subtensor(c[I], c0[I])
+        #y = y*mask + y0*(1-mask)
+        #c = c*mask + c0*(1-mask)
     return y, c
 
 def split(w):
@@ -117,6 +120,9 @@ def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
         #idxs = th.arange(peel, n, unroll)
         #y, c = ifelse(peel > 0, (th.concatenate([ypeel, y], axis=0), th.concatenate([cpeel, c], axis=0)), (y,c))
     else:
+        #from theano.compile.nanguardmode import NanGuardMode
+        #mode = NanGuardMode(nan_is_error=True, inf_is_error=False, big_is_error=False)
+        #[y, c], _ = op(f, seqs, [y0, c0], non_sequences=wy, mode=mode)
         [y, c], _ = op(f, seqs, [y0, c0], non_sequences=wy)
     return y, c
 
