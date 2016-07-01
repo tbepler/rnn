@@ -7,6 +7,7 @@ from linear import Linear
 from softmax import logsoftmax, softmax, logsumexp
 from loss import cross_entropy, confusion
 from rnn.initializers import orthogonal
+from activation import fast_sigmoid, fast_tanh
 
 def ident(x):
     return x
@@ -17,9 +18,14 @@ def dampen(x):
     return T.sgn(x)*T.log(abs(x)+1)
 
 class LSTMStack(object):
-    def __init__(self, n_in, n_components, layers=[], **kwargs):
+    def __init__(self, n_in, n_components, layers=[], sigmoid=fast_sigmoid, tanh=fast_tanh, **kwargs):
         if len(layers) > 0:
-            self.stack = LayeredLSTM(n_in, layers)
+            self.stack = LayeredLSTM(n_in, layers
+                    , iact=sigmoid
+                    , fact=sigmoid
+                    , oact=sigmoid
+                    , gact=tanh
+                    , cact=tanh)
             n_in = layers[-1]
         else:
             self.stack = None
@@ -49,22 +55,46 @@ def normalize(x, axis=-1):
     return x/Z
 
 class BlstmEmbed(object):
-    def __init__(self, n_in, n_components, hidden_units=[], l2_reg=0.01, type='real', grad_clip=None):
+    def __init__(self, n_in, n_components, hidden_units=[], l2_reg=0.01, type='real', grad_clip=None
+            , sigmoid=fast_sigmoid, tanh=fast_tanh):
         self.n_in = n_in
         self.n_components = n_components
         self.l2_reg = l2_reg
         self.grad_clip = grad_clip
         if type == 'real':
-            self.forward = LSTMStack(n_in, n_components, layers=hidden_units)
-            self.backward = LSTMStack(n_in, n_components, layers=hidden_units)
-        elif type == 'non-neg':
-            from activation import fast_sigmoid
             self.forward = LSTMStack(n_in, n_components, layers=hidden_units
-                    , cact=fast_sigmoid
-                    , gact=fast_sigmoid)
+                    , sigmoid=sigmoid
+                    , tanh=tanh
+                    , iact=sigmoid
+                    , fact=sigmoid
+                    , oact=sigmoid
+                    , gact=tanh
+                    , cact=tanh)
             self.backward = LSTMStack(n_in, n_components, layers=hidden_units
-                    , cact=fast_sigmoid
-                    , gact=fast_sigmoid)
+                    , sigmoid=sigmoid
+                    , tanh=tanh
+                    , iact=sigmoid
+                    , fact=sigmoid
+                    , oact=sigmoid
+                    , gact=tanh
+                    , cact=tanh)
+        elif type == 'non-neg':
+            self.forward = LSTMStack(n_in, n_components, layers=hidden_units
+                    , sigmoid=sigmoid
+                    , tanh=tanh
+                    , iact=sigmoid
+                    , fact=sigmoid
+                    , oact=sigmoid
+                    , cact=sigmoid
+                    , gact=sigmoid)
+            self.backward = LSTMStack(n_in, n_components, layers=hidden_units
+                    , sigmoid=sigmoid
+                    , tanh=tanh
+                    , iact=sigmoid
+                    , fact=sigmoid
+                    , oact=sigmoid
+                    , cact=sigmoid
+                    , gact=sigmoid)
         else:
             raise "Type: '{}' not supported".format(type)
         self.type = type
@@ -97,8 +127,9 @@ class BlstmEmbed(object):
         return self.forward.weights + self.backward.weights + self.logit_decoder.weights
 
     def combine(self, L, R):
-        Z = normalize(L[:-2] + R[2:])
-        return T.concatenate([L[1:2], Z, R[-2:-1]], axis=0)
+        #Z = normalize(L[:-2] + R[2:])
+        Z = (L[:-2] + R[2:])/2
+        return T.concatenate([R[1:2], Z, L[-2:-1]], axis=0)
         
     def class_logprob(self, V):
         return logsoftmax(self.logit_decoder(V), axis=-1)
