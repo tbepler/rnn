@@ -150,8 +150,8 @@ class RecurrentAttention(object):
 
     def __call__(self, X, L, R, mask=None):
         i = T.shape_padright(T.arange(L.shape[0]))
-        I = T.shape_padright(T.shape_padright(i < i.T))
-        J = T.shape_padright(T.shape_padright(i > i.T))
+        I = T.shape_padright(T.shape_padright(i.T < i))
+        J = T.shape_padright(T.shape_padright(i.T > i))
         H = L*I + R*J
         S = self.decoder_state(X, mask=mask) 
         A = T.tanh(H.dot(self.W) + S.dot(self.U).dimshuffle(0, 'x', 1, 2)).dot(self.v)
