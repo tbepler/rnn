@@ -17,6 +17,9 @@ def dampen(x):
     # preserves full range, but dampens the gradient
     return T.sgn(x)*T.log(abs(x)+1)
 
+def sigmoid(x):
+    return (T.tanh(x)+1)/2
+
 class LSTMStack(object):
     def __init__(self, n_in, n_components, layers=[], sigmoid=fast_sigmoid, tanh=fast_tanh, **kwargs):
         if len(layers) > 0:
