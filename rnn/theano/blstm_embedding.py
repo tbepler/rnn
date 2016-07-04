@@ -52,18 +52,14 @@ class LSTMStack(object):
             X, _, _, _ = self.stack.scanr(X, **kwargs)
         return self.top.scanr(X, **kwargs)
 
-def normalize(x, axis=-1):
-    Z = T.sqrt(T.sum(x**2, axis=axis, keepdims=True))
-    Z = T.maximum(Z, 1e-39) #about the closest to zero float32 can go
-    return x/Z
-
 class BlstmEmbed(object):
     def __init__(self, n_in, n_components, hidden_units=[], l2_reg=0.01, type='real', grad_clip=None
-            , sigmoid=fast_sigmoid, tanh=fast_tanh):
+            , sigmoid=fast_sigmoid, tanh=fast_tanh, scale=ident):
         self.n_in = n_in
         self.n_components = n_components
         self.l2_reg = l2_reg
         self.grad_clip = grad_clip
+        self.scale = scale
         if type == 'real':
             self.forward = LSTMStack(n_in, n_components, layers=hidden_units
                     , sigmoid=sigmoid
@@ -113,6 +109,7 @@ class BlstmEmbed(object):
         state['backward'] = self.backward
         state['type'] = self.type
         state['logit_decoder'] = self.logit_decoder
+        state['scale'] = self.scale
         return state
 
     def __setstate__(self, state):
@@ -124,6 +121,7 @@ class BlstmEmbed(object):
         self.backward = state['backward']
         self.type = state['type']
         self.logit_decoder = state['logit_decoder']
+        self.scale = state.get('scale', ident)
 
     @property
     def weights(self):
@@ -131,15 +129,15 @@ class BlstmEmbed(object):
 
     def combine(self, L, R):
         #Z = normalize(L[:-2] + R[2:])
-        Z = (L[:-2] + R[2:])/2
+        Z = self.scale((L[:-2] + R[2:])/2)
         return T.concatenate([R[1:2], Z, L[-2:-1]], axis=0)
         
     def class_logprob(self, V):
         return logsoftmax(self.logit_decoder(V), axis=-1)
 
     def transform(self, X, mask=None):
-        L, _ = self.forward.scanl(X, mask=mask, clip=self.grad_clip)
-        R, _ = self.backward.scanr(X, mask=mask, clip=self.grad_clip)
+        L, _ = self.forward.scanl(X, mask=mask, clip=self.grad_clip, activation=self.scale)
+        R, _ = self.backward.scanr(X, mask=mask, clip=self.grad_clip, activation=self.scale)
         return self.combine(L, R)
 
     def prior(self, Z):
