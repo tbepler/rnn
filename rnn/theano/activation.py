@@ -20,3 +20,8 @@ def normalize(x, axis=-1):
     Z = T.maximum(Z, 1e-12) 
     return x/Z
 
+def dampen(x):
+    #transform x as sign(x)*ln(|x|+1)
+    # preserves full range, but dampens the gradient
+    return T.sgn(x)*T.log1p(abs(x))
+
