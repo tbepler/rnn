@@ -135,9 +135,15 @@ class BlstmEmbed(object):
     def class_logprob(self, V):
         return logsoftmax(self.logit_decoder(V), axis=-1)
 
-    def transform(self, X, mask=None):
-        L, _ = self.forward.scanl(X, mask=mask, clip=self.grad_clip, activation=self.scale)
-        R, _ = self.backward.scanr(X, mask=mask, clip=self.grad_clip, activation=self.scale)
+    def transform(self, X, mask=None, units='output'):
+        if units == 'output':
+            L, _ = self.forward.scanl(X, mask=mask, clip=self.grad_clip, activation=self.scale)
+            R, _ = self.backward.scanr(X, mask=mask, clip=self.grad_clip, activation=self.scale)
+        elif units == 'state':
+            _, L = self.forward.scanl(X, mask=mask, clip=self.grad_clip, activation=self.scale)
+            L = self.scale(self.forward.top.cact(L))
+            _, R = self.backward.scanr(X, mask=mask, clip=self.grad_clip, activation=self.scale)
+            R = self.scale(self.backward.top.cact(R))
         return self.combine(L, R)
 
     def prior(self, Z):

@@ -199,20 +199,20 @@ class ContextEmbedding(object):
                     train_res[i] = 0
             callback(it%1, 'fit')
 
-    def _compile_transform_minibatch(self, dtype):
+    def _compile_transform_minibatch(self, dtype, **kwargs):
         if not hasattr(self, 'transform_minibatch'):
             flank = T.iscalar()
             X = T.matrix(dtype=dtype)
             mask = self._theano_mask()
             n = X.shape[0]
-            Z = self.encoder.transform(X, mask)
+            Z = self.encoder.transform(X, mask, **kwargs)
             Z = Z[flank:n-flank]
             return theano.function([X, mask, flank], Z)  
         else:
             return self.transform_minibatch
 
     def transform(self, data, callback=null_func, **kwargs):
-        transform_minibatch = self._compile_transform_minibatch(data[0].dtype)
+        transform_minibatch = self._compile_transform_minibatch(data[0].dtype, **kwargs)
         total = 0
         if hasattr(data, '__len__'):
             total = sum(len(x) for x in data)
