@@ -44,12 +44,12 @@ class LSTMStack(object):
 
     def scanl(self, X, **kwargs):
         if self.stack is not None:
-            X, _, _, _ = self.stack.scanl(X, **kwargs)
+            X, _, _, _ = self.stack.scanl(X)
         return self.top.scanl(X, **kwargs)
 
     def scanr(self, X, **kwargs):
         if self.stack is not None:
-            X, _, _, _ = self.stack.scanr(X, **kwargs)
+            X, _, _, _ = self.stack.scanr(X)
         return self.top.scanr(X, **kwargs)
 
 class BlstmEmbed(object):
