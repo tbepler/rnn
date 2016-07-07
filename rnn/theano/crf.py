@@ -64,6 +64,7 @@ class CRF(object):
         self.w_trans = theano.shared(w_trans, borrow=True)
         self.w_init = theano.shared(w_init, borrow=True)
         self._loss = loss
+        self.labels = labels
 
     def __getstate__(self):
         state = {}
@@ -86,12 +87,47 @@ class CRF(object):
         self.w_trans.set_value(ws[0])
         self.w_init.set_value(ws[1])
 
-    def update(self, change):
-        if change is int:
+    def update(self, change, history=None):
+        #print change
+        if type(change) is int:
         # Adding unit
+            trans = self.w_trans.get_value()
+            init = self.w_init.get_value()
+            #print trans
+            #print init
+            trans = np.concatenate((trans, np.random.rand(self.labels, change, self.labels)), axis = 1)
+            init = np.concatenate((init, np.random.rand(change, self.labels)))
+            print trans.shape
+            print init.shape
+            self.w_trans.set_value(trans)
+            self.w_init.set_value(init)
+
+            if history is not None:
+                for hist in history:
+                    hist_trans = hist[0].get_value()
+                    hist_init = hist[1].get_value()
+                    hist_trans = np.concatenate((hist_trans, np.zeros((self.labels, change, self.labels))), axis = 1)
+                    hist_init = np.concatenate((hist_init, np.zeros((change, self.labels))))
+                    hist[0].set_value(hist_trans)
+                    hist[1].set_value(hist_init)
         else:
         # Removing unit
-            
+            trans = self.w_trans.get_value()
+            init = self.w_init.get_value()
+            for remove in change:
+                trans = np.delete(trans, remove + 1, 1)
+                init = np.delete(init, remove + 1, 0)
+            self.w_trans.set_value(trans)
+            self.w_init.set_value(init)
+            if history is not None:
+                for hist in history:
+                    hist_trans = hist[0].get_value()
+                    hist_init = hist[1].get_value()
+                    for remove in change:
+                        hist_trans = np.delete(hist_trans, remove + 1, 1)
+                        hist_init = np.delete(hist_init, remove + 1, 0)
+                    hist[0].set_value(hist_trans)
+                    hist[1].set_value(hist_init)
 
     def loss(self, X, Y, **kwargs):
         return self._loss(self, X, Y, **kwargs)

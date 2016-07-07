@@ -1,8 +1,6 @@
 import theano
 import theano.tensor as T
 
-from rnn.initializers import orthogonal
-
 def softmax(x, axis=-1):
     return T.exp(logsoftmax(x, axis=axis))
 

@@ -38,6 +38,7 @@ class SGD(object):
     def _updates(self, weights, grads, learning_rate):
         delta, updates = self._unscaled_deltas(weights, grads)
         mom = Momentum(self.momentum, weights)
+        self.velocity = mom.velocity
         mom_delta, mom_updates = mom(delta)
         w_upd = [(w, w-learning_rate*md) for w,md in zip(weights, mom_delta)]
         return updates + mom_updates + w_upd
@@ -45,7 +46,6 @@ class SGD(object):
     def _compile(self, inputs, outputs, weights, grads):
         learning_rate = th.scalar()
         updates = self._updates(weights, grads, learning_rate)
-        print "Here"
         print learning_rate
         print inputs
         print outputs
@@ -55,34 +55,48 @@ class SGD(object):
     def __call__(self, data, inputs, outputs, weights, grads=None, max_iters=-1):
         if grads is None:
             grads = theano.grad(outputs[0], weights)
-        layers = inputs[-1]
-        inputs = inputs[:-1]
+        layers = inputs[-2]
+        layerloc = inputs[-1]
+        inputs = inputs[:-2]
         f = self._compile(inputs, outputs, weights, grads)
         n = len(data)
         i = 0
         while i < max_iters or max_iters < 0:
             j = 0.0
             for args in data:
+                self.update_solver()
                 #print args
                 ret = f(self.learning_rate, *args)
                 j += 1
                 yield i+j/n, ret
             i += 1
             self.learning_rate = self.decay(self.learning_rate)
-            change = layers[0].update()
+            # Layer 0 updates and updates the historical data
+            print layerloc
+            change = layers[0].update(history=[self.history[layerloc[0][0]:layerloc[0][1]], self.velocity[layerloc[0][0]:layerloc[0][1]]])
             if change != 0:
-                layers[1].update(change)
+                # Layer 0's updates are passed into Layer 1 along with shared variables that need to be updated for the solver (history)
+                layers[1].update(change, history=[self.history[layerloc[1][0]:layerloc[1][1]], self.velocity[layerloc[1][0]:layerloc[1][1]]])
+
+    def update_solver(change):
+        # update shared variables
+        return
 
 class RMSprop(SGD):
     def __init__(self, lr, rho=0.95, eps=1e-5, momentum=0.9, decay=NoDecay()):
         super(RMSprop, self).__init__(lr, momentum=momentum, decay=decay)
         self.rho = rho
         self.eps = eps
+        self.history = []
     
     def _unscaled_deltas(self, weights, grads):
-        history = [theano.shared(w.get_value()*0) for w in weights]
-        hist_upd = [self.rho*h + (1-self.rho)*g*g for h,g in zip(history, grads)]
+        print [w.name for w in weights]
+        self.history = [theano.shared(w.get_value()*0) for w in weights]
+        hist_upd = [self.rho*h + (1-self.rho)*g*g for h,g in zip(self.history, grads)]
         delta = [g/(th.sqrt(h)+self.eps) for g,h in zip(grads, hist_upd)]
-        return delta, zip(history, hist_upd)
+        return delta, zip(self.history, hist_upd)
 
-            
+    def update_solver(self):
+        # updates the history shared variables
+        print "printing"
+        print [w.get_value().shape for w in self.history]
