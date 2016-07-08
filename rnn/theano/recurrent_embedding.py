@@ -6,12 +6,13 @@ from lstm import LSTM
 from linear import Linear
 from softmax import logsoftmax, softmax, logsumexp
 from loss import cross_entropy, confusion
-from rnn.activations import normalize
+from rnn.theano.activation import normalize
 from rnn.initializers import orthogonal
 
 class LSTMEncoder(object):
     def __init__(self, n_in, units, iact=T.nnet.sigmoid, fact=T.nnet.sigmoid, oact=T.nnet.sigmoid, gact=T.tanh
             , cact=T.tanh, scaling=normalize, grad_clip=None):
+        units = units // 2
         self.left = LSTM(n_in, units, iact=iact, fact=fact, oact=oact, gact=gact, cact=cact)
         self.right = LSTM(n_in, units, iact=iact, fact=fact, oact=oact, gact=gact, cact=cact)
         self.scaling = scaling
@@ -51,7 +52,7 @@ class DeepDecoder(object):
             self.hidden_layers.append(Linear(n_in, n))
             n_in = n
         self.linear = Linear(n_in, units)
-        self.hidden_activation = activation
+        self.hidden_activation = hidden_activation
 
     @property
     def weights(self):
