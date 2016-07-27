@@ -1,0 +1,100 @@
+[55903, 376313, 393265, 234267]
+Training Inputs: 4590
+Layers: 2
+Units: 8
+Data preprocessing time: 0:00:00.882695
+Model construction time: 0:00:00.000013
+Begin training
+[None, None, None, None, None, None]
+<TensorType(float64, scalar)>
+[<TensorType(int32, matrix)>, <TensorType(int32, matrix)>, <TensorType(int8, matrix)>]
+[Elemwise{add,no_inplace}.0, Elemwise{mul,no_inplace}.0, Sum{acc_dtype=int64}.0]
+[(<TensorType(float64, matrix)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, vector)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, vector)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, 3D)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, vector)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, vector)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, 3D)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{add,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{sub,no_inplace}.0), (<TensorType(float64, vector)>, Elemwise{sub,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{sub,no_inplace}.0), (<TensorType(float64, vector)>, Elemwise{sub,no_inplace}.0), (<TensorType(float64, 3D)>, Elemwise{sub,no_inplace}.0), (<TensorType(float64, matrix)>, Elemwise{sub,no_inplace}.0)]
+Epoch 1
+OrderedDict([('Loss', 0.00015667278039368745), ('Accuracy', 0.8256774251991983)])
+Training time: 0:04:55.571477
+[[(8, 1)], []]
+adds = [(8, 1)]
+dels = []
+(4, 9, 4)
+(9, 4)
+8
+Epoch 2
+OrderedDict([('Loss', 0.00015027061859207151), ('Accuracy', 0.8263219180408927)])
+Training time: 0:04:23.090247
+[[], [7]]
+adds = []
+dels = [7]
+7
+(4, 10, 4)
+7
+(4, 10, 4)
+Epoch 3
+OrderedDict([('Loss', 0.00015020643435763539), ('Accuracy', 0.8263219180408927)])
+Training time: 0:04:19.128967
+[[], [0]]
+adds = []
+dels = [0]
+0
+(4, 9, 4)
+0
+(4, 9, 4)
+Epoch 4
+OrderedDict([('Loss', 0.00015019411656404016), ('Accuracy', 0.8263219180408927)])
+Training time: 0:04:16.884735
+[[], []]
+Epoch 5
+OrderedDict([('Loss', 0.0001499111556639405), ('Accuracy', 0.8266257638608424)])
+Training time: 0:04:17.377588
+[[(3, 1)], [6]]
+adds = [(3, 1)]
+dels = [6]
+(4, 8, 4)
+(8, 4)
+3
+6
+(4, 9, 4)
+6
+(4, 9, 4)
+Epoch 6
+OrderedDict([('Loss', 0.00014944318238940089), ('Accuracy', 0.8270466186300894)])
+Training time: 0:04:17.267306
+[[], []]
+Epoch 7
+OrderedDict([('Loss', 0.00014952645516307328), ('Accuracy', 0.8270607729384721)])
+Training time: 0:04:18.093778
+[[], [1]]
+adds = []
+dels = [1]
+1
+(4, 8, 4)
+1
+(4, 8, 4)
+Epoch 8
+OrderedDict([('Loss', 0.00014944356308072243), ('Accuracy', 0.8270551112151191)])
+Training time: 0:04:16.396995
+[[], []]
+Epoch 9
+OrderedDict([('Loss', 0.00014932791286495313), ('Accuracy', 0.8271079539664147)])
+Training time: 0:04:15.639185
+[[(6, 1)], []]
+adds = [(6, 1)]
+dels = []
+(4, 7, 4)
+(7, 4)
+6
+Epoch 10
+OrderedDict([('Loss', 0.0001495386468636143), ('Accuracy', 0.8270824762113257)])
+Training time: 0:04:18.894887
+[[(3, 1)], []]
+adds = [(3, 1)]
+dels = []
+(4, 8, 4)
+(8, 4)
+3
+Begin testing
+Batch accuracy:
+0.827119277413
+None
+Testing time: 0:01:43.621507
+Total runtime: 0:45:22.849856

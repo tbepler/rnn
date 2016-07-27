@@ -5,6 +5,7 @@ import theano.tensor as th
 import numpy as np
 
 from activation import fast_tanh, fast_sigmoid
+from batchnormalization import BatchNormalizer
 sys.path.append("../../")
 from rnn.initializers import orthogonal
 
@@ -19,20 +20,22 @@ def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmo
     c = c0*f + i*g
     y = activation(o*cact(c))
     if mask is not None:
-        mask = mask.dimshuffle(0, 'x')
-        y = y*mask + y0*(1-mask)
-        c = c*mask + c0*(1-mask)
+        #mask = th.shape_padright(mask)
+        I = (1-mask).nonzero()
+        y = th.set_subtensor(y[I], y0[I])
+        c = th.set_subtensor(c[I], c0[I])
+        #y = y*mask + y0*(1-mask)
+        #c = c*mask + c0*(1-mask)
     return y, c
 
 def split(w):
-    m = w.get_value().shape[1]/4
-    n = w.get_value().shape[0] - m - 1
+    m = w.shape[1]/4
+    n = w.shape[0] - m - 1
     return w[0], w[1:n+1], w[n+1:]
 
 def gates(bias, wx, x):
     if 'int' in x.dtype:
         ifog = wx[x] + bias
-        theano.pp(ifog)
     else:
         ifog = th.dot(x, wx) + bias
     return ifog
@@ -61,8 +64,6 @@ def unfoldr(w, y0, c0, x, steps, mask=None, **kwargs):
     return y[::-1], c[::-1]
 
 def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
-    #y0 = th.shape_padaxis(y0, 0)
-    #c0 = th.shape_padaxis(c0, 0)
     b, wx, wy = split(w)
     n = x.shape[0]
     ifog = gates(b, wx, x)
@@ -144,9 +145,8 @@ def foldr(w, y0, c0, x, mask=None, **kwargs):
 class LSTM(object):
     def __init__(self, ins, units, init=orthogonal, name=None, dtype=theano.config.floatX
                  , iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmoid, gact=fast_tanh
-                 , cact=fast_tanh, forget_bias=3):
-        self.ins = ins
-        w = np.random.randn(1+units+ins, 4*units).astype(dtype)
+                 , cact=fast_tanh, forget_bias=3, batch_norm=False):
+        w = np.random.randn(1+ins+units, 4*units).astype(dtype)
         w[0] = 0
         w[0,units:2*units] = forget_bias
         init(w[1:])
@@ -162,8 +162,20 @@ class LSTM(object):
         self.gact = gact
         self.cact = cact
 
+        if batch_norm:
+            self.norm = BatchNormalizer(units)
+        else:
+            self.norm = None
+
     @property
-    def weights(self): return [self.ws]
+    def weights(self): 
+        if self.norm != None:
+            return [self.ws] + self.norm.weights()
+        else:
+            return [self.ws]
+
+    @property
+    def ins(self): return self.ws.get_value(borrow=True).shape[0] - (1 + self.units)
 
     @property
     def units(self): return self.ws.get_value(borrow=True).shape[1]//4
@@ -190,8 +202,6 @@ class LSTM(object):
                 lstm_hist.set_value(hist)
 
         self.ws.set_value(weights)
-        print self.units
-        print self.ws.get_value().shape
         self.y0.set_value(np.zeros((self.units)))
         self.c0.set_value(np.zeros((self.units)))
 
@@ -218,10 +228,45 @@ class LSTM(object):
                 lstm_hist.set_value(hist)
 
         self.ws.set_value(weights)
-        print self.units
-        print self.ws.get_value().shape
         self.y0.set_value(np.zeros((self.units)))
         self.c0.set_value(np.zeros((self.units)))
+
+    # Changes weights so it has the right number of inputs for 
+    def delete_ins(self, del_ins, history=None):
+        #print del_ins
+        weights = self.ws.get_value()
+        print weights.shape
+        for ins in del_ins:
+            weights = np.delete(weights, ins + 1, 0)
+        print weights.shape
+        self.ws.set_value(weights)
+        print self.ins
+
+        if history is not None:
+            for lstm_hist in history:
+                hist = lstm_hist[0].get_value()
+                for ins in del_ins:
+                    hist = np.delete(hist, ins + 1, 0)
+                print hist.shape
+                lstm_hist[0].set_value(hist)
+
+    def add_ins(self, add_ins, history=None):
+        #print del_ins
+        weights = self.ws.get_value()
+        for ins in add_ins:
+            random = np.random.rand(ins[1], weights.shape[1])
+            normalized_random = random/np.reshape(np.linalg.norm(random, axis=1), (-1,1))
+            weights = np.insert(weights, ins[0] + 1, normalized_random, 0)
+        self.ws.set_value(weights)
+
+        if history is not None:
+            for lstm_hist in history:
+                hist = lstm_hist[0].get_value()
+                for ins in add_ins:
+                    random = np.random.rand(ins[1], hist.shape[1])
+                    normalized_random = random/np.reshape(np.linalg.norm(random, axis=1), (-1,1))
+                    hist = np.insert(hist, ins[0] + 1, normalized_random, 0)
+                lstm_hist[0].set_value(hist)
 
     def __getstate__(self):
         state = {}
@@ -260,12 +305,19 @@ class LSTM(object):
 
     def scanl(self, x, y0=None, c0=None, mask=None, **kwargs):
         y0, c0 = self.build_init_states(x, y0, c0)
-        return scanl(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
+        y, c = scanl(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
+        if self.norm != None:
+            y = self.norm.scan(y)
+        return y, c
 
     def scanr(self, x, y0=None, c0=None, mask=None, **kwargs):
-        return scanr(self.ws, self.y0, self.c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
+        y0, c0 = self.build_init_states(x, y0, c0)
+        y0, c0 = scanr(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, **kwargs)
+        if self.norm != None:
+            y0 = self.norm.scan(y0)
+        return y0, c0
 
     def foldl(self, x, y0=None, c0=None, mask=None, **kwargs):
         if y0 is None:
@@ -304,21 +356,28 @@ class LSTM(object):
                 , gact=self.gact, cact=self.cact, **kwargs)
 
 class LayeredLSTM(object):
-    def __init__(self, ins, layers, **kwargs):
+    def __init__(self, ins, layers, batch_norm=False,**kwargs):
         self.lstms = []
-        for n in range(layers):
-            self.lstms.append(LSTM(ins, n, **kwargs))
+        for n in layers:
+            self.lstms.append(LSTM(ins, n, batch_norm=batch_norm, **kwargs))
             ins = n
 
     @property
     def units(self):
         return sum(lstm.units for lstm in self.lstms)
 
+    @property
+    def weights(self):
+        weights = []
+        for lstm in self.lstms:
+           weights += lstm.weights
+        return weights
+
     def split(self, vector):
         if vector is not None:
             splits = []
             i = 0
-            for lstm in lstms:
+            for lstm in self.lstms:
                 n = lstm.units
                 splits.append(vector[:,i:i+n])
                 i += n
@@ -335,17 +394,17 @@ class LayeredLSTM(object):
             ys.append(y[-1])
             cs.append(c[-1])
             x = y
-        ys = T.concatenate(ys, axis=-1)
-        cs = T.concatenate(cs, axis=-1)
+        ys = th.concatenate(ys, axis=-1)
+        cs = th.concatenate(cs, axis=-1)
         return y, ys, cs
 
 class BLSTM(object):
-    def __init__(self, ins, units, **kwargs):
+    def __init__(self, ins, units, batch_norm=False, **kwargs):
         # ins = dimension for set of parameters
         self.nl = units // 2 + units % 2
         self.nr = units // 2
-        self.lstml = LSTM(ins, self.nl, **kwargs)
-        self.lstmr = LSTM(ins, self.nr, **kwargs)
+        self.lstml = LSTM(ins, self.nl, batch_norm=batch_norm, **kwargs)
+        self.lstmr = LSTM(ins, self.nr, batch_norm=batch_norm, **kwargs)
 
     @property
     def weights(self): return self.lstml.weights + self.lstmr.weights
@@ -372,14 +431,18 @@ class BLSTM(object):
         return th.concatenate([yl,yr], axis=yl.ndim-1)
 
 class LayeredBLSTM(object):
-    def __init__(self, ins, units, layers, **kwargs):
+    def __init__(self, ins, layers, batch_norm=False, **kwargs):
         self.blstms = []
-        self.blstms.append(BLSTM(ins, units, **kwargs))
-        for n in range(layers-1):
-            self.blstms.append(BLSTM(units, units, **kwargs))
+        for n in layers:
+            self.blstms.append(DiffBLSTM(ins, n, batch_norm=batch_norm, **kwargs))
+            ins = n
 
     @property
-    def weights(self): return [blstm.weights for blstm in self.blstms]
+    def weights(self):
+        weights = []
+        for blstm in self.blstms:
+            weights += blstm.weights
+        return weights
 
     @property
     def units(self): return sum(blstm.units for blstm in self.blstms)
@@ -401,7 +464,7 @@ class LayeredBLSTM(object):
         return x
 
 class DiffLSTM(object):
-    def __init__(self, ins, units, Td=0.05, k=2, Mmin=0.025, Padd=0.1, Pdel=0.1, **kwargs):
+    def __init__(self, ins, units, batch_norm = False, Td=0.05, k=2, Mmin=0.025, Padd=0.5, Pdel=0.5, **kwargs):
         self.lstm = LSTM(ins, units, **kwargs)
         self.Td = Td # Deletion Threshold - if falls below threshold then marked for possible deletion
         self.k = k # Number of units with multiplier below threshold (will adjust number of units if less/more than k)
@@ -409,28 +472,39 @@ class DiffLSTM(object):
         self.Padd = Padd # Probability that a unit to be added is added
         self.Pdel = Pdel # Probabiiity that a unit to be deleted is deleted
         self.multiplier = theano.shared(np.ones((units))*self.Td)
+        if batch_norm:
+            self.norm = BatchNormalizer(units)
+        else:
+            self.norm = None
 
     @property
     def units(self): return self.lstm.units
 
     @property
-    def weights(self): return self.lstm.weights + [self.multiplier]
+    def weights(self): 
+        if self.norm != None:
+            return self.lstm.weights + [self.multiplier] + self.norm.weights()
+        else:
+            return self.lstm.weights + [self.multiplier]
 
     def update(self, history=None):
-        multip = np.absolute(self.multiplier.get_value())
-        print multip
+        #multip = np.absolute(self.multiplier.get_value())
+        multip = self.multiplier.get_value()
         below_threshold = []
+        #print "Multip before: %s" % multip
         for i in range(len(multip)):
-            if multip[i] < self.Td:
+            if abs(multip[i]) < self.Td:
                 below_threshold += [i]
-            if multip[i] < self.Mmin:
-                multip[i] = self.Mmin
+            if abs(multip[i]) < self.Mmin:
+                if multip[i] < 0:
+                    multip[i] = -self.Mmin
+                else:
+                    multip[i] = self.Mmin
         diff = self.k - len(below_threshold)
         del_units = []
         if diff < 0:
             below_threshold = np.array(below_threshold)
             np.random.shuffle(below_threshold)
-            print below_threshold
             potential_remove = below_threshold[:-diff]
             # Preserve potentially removed unit with probability 1-Pdel
             for i in potential_remove:
@@ -439,6 +513,11 @@ class DiffLSTM(object):
             if del_units != []:
                 del_units.sort()
                 del_units = del_units[::-1]
+                # Updates weights for batch normalizer
+                if self.norm != None:
+                    norm_hist = [hist[2:4] for hist in history]
+                    history = [hist[0:2] for hist in history]
+                    self.norm.delete(del_units, norm_hist)
                 self.delete(del_units, history)
         add_units = 0
         if diff > 0:
@@ -447,13 +526,34 @@ class DiffLSTM(object):
                 if np.random.rand() < self.Padd:
                     add_units += 1
             if add_units > 0:
+                # Updates weights for batch normalizer
+                if self.norm != None:
+                    norm_hist = [hist[2:4] for hist in history]
+                    history = [hist[0:2] for hist in history]
+                    self.norm.add(add_units, norm_hist)
                 self.add(add_units, history)
         #returns list of units to be deleted and number of units to be added to end (to inform next layer of unit change)
-        #print self.units
+        print "Multiplier: %s" % multip
         if del_units != []:
-            return del_units
+            # deletions are made as a list of point deletions
+            return [[], del_units]
+        elif add_units != 0:
+            # additions are made as a list of location of the additon and the number of units added
+            return [[(self.units - add_units, add_units)], []]
         else:
-            return add_units
+            return [[],[]]
+
+    # Updates LSTM if it is after a differentiable layer
+    def update_ins(self, change, history=None):
+        adds, dels = change
+        print "adds = %s" % adds
+        print "dels = %s" % dels
+        if adds != []: 
+        # Adding unit
+            self.lstm.add_ins(adds, history=history)
+        if dels != []: 
+        # Removing unit
+            self.lstm.delete_ins(dels, history=history)
 
     # Deletes selected units from multiplier and lstm layer
     def delete(self, del_units, history=None):
@@ -489,25 +589,39 @@ class DiffLSTM(object):
 
     def scanl(self, x, y0=None, c0=None, mask=None, **kwargs):
         y, c = self.lstm.scanl(x, y0=None, c0=None,  mask = mask, **kwargs)
-        return y * abs(self.multiplier), c
+        y = y * self.multiplier
+        if self.norm != None:
+            y = self.norm.scan(y)
+        return y, c
 
     def scanr(self, x, y0=None, c0=None, mask=None, **kwargs):
         y, c = self.lstm.scanr(x, y0=None, c0=None,  mask = mask, **kwargs)
-        return y * abs(self.multiplier), c
+        y = y * self.multiplier
+        if self.norm != None:
+            y = self.norm.scan(y)
+        return y, c
 
 class DiffBLSTM(object):
-    def __init__(self, ins, units, **kwargs):
+    def __init__(self, ins, units, batch_norm=False, **kwargs):
         # ins = dimension for set of parameters
-        self.nl = units // 2 + units % 2 
-        self.nr = units // 2
-        self.lstml = DiffLSTM(ins, self.nl, **kwargs)
-        self.lstmr = DiffLSTM(ins, self.nr, **kwargs)
+        nl = units // 2 + units % 2 
+        nr = units // 2
+        self.lstml = DiffLSTM(ins, nl, batch_norm=batch_norm, **kwargs)
+        self.lstmr = DiffLSTM(ins, nr, batch_norm=batch_norm, **kwargs)
+        self.multiplier = th.concatenate([self.lstml.multiplier, self.lstmr.multiplier], axis = 0)
+        self.bnorm = batch_norm
 
     @property
     def weights(self): return self.lstml.weights + self.lstmr.weights
 
     @property
     def units(self): return self.nl + self.nr
+
+    @property
+    def nl(self): return self.lstml.units
+
+    @property
+    def nr(self): return self.lstmr.units
 
     def __call__(self, x, mask=None, **kwargs):
         return self.scan(x, mask=mask, **kwargs)
@@ -528,5 +642,112 @@ class DiffBLSTM(object):
         return th.concatenate([yl,yr], axis=yl.ndim-1)
 
     def update(self, history=None):
-        self.lstml.update(history[:2])
-        self.lstmr.update(history[2:])
+        if history != None:
+            if self.bnorm:
+                historyl = [hist[:4] for hist in history]
+                historyr = [hist[4:] for hist in history]
+            else:
+                historyl = [hist[:2] for hist in history]
+                historyr = [hist[2:] for hist in history]
+            history = [historyl] + [historyr]
+            updatel = self.lstml.update(history=history[0])
+            updater = self.lstmr.update(history=history[1])
+        # If both lstms are changed then need to modify the indices of the changes
+        # index_change = self.nl
+        # if (updater[0] != [] or updater[1] != []) and (updatel[0] != [] or updatel[1] != []):
+        #     index_change -= len(updatel[1])
+        #     if updatel[0] != []:
+        #         index_change = updatel[0][0][1]
+        #     if updater[0] != []:
+        #         return [updatel[0]+[(updater[0][0][0], updater[0][0][1] + index_change)], updatel[1]]
+        #     else:
+        #         return [updatel[0], updatel[1] + [delr+index_change for delr in updater[1]]]
+        # else:
+        #     return [updater[0]+updatel[0], updater[1]+updatel[1]]
+        unit_change = 0
+
+        # Because the units of the left lstm changed after adding
+        if updatel[0] != []:
+            unit_change = -updatel[0][0][1]
+        # Because the units of the left lstm changed after deleting
+        if updatel[1] != []:
+            unit_change = len(updatel[1])
+        if updater[0] != []:
+            updater[0][0] = (self.nl + updater[0][0][0] + unit_change, updater[0][0][1])
+        if updater[1] != []:
+            updater[1] = [delete + self.nl + unit_change for delete in updater[1]]
+        return [updater[0] + updatel[0], updater[1] + updatel[1]]
+
+    # Updates LSTM ins if it is after a differentiable layer
+    def update_ins(self, change, history=None):
+        if history != None:
+            if self.bnorm:
+                historyl = [hist[0:2] for hist in history]
+                historyr = [hist[4:6] for hist in history]
+            else:
+                historyl = [hist[:2] for hist in history]
+                historyr = [hist[2:] for hist in history]
+            history = [historyl] + [historyr]
+            self.lstml.update_ins(change, history=history[0])
+            self.lstmr.update_ins(change, history=history[1])
+        else:
+            self.lstml.update_ins(change, history=history)
+            self.lstmr.update_ins(change, history=history)
+
+class DiffLayeredBLSTM(object):
+    def __init__(self, ins, layers, batch_norm=False, **kwargs):
+        self.blstms = []
+        for n in layers:
+            self.blstms.append(DiffBLSTM(ins, n, batch_norm=batch_norm, **kwargs))
+            ins = n
+        self.multiplier = []
+        for n in self.blstms:
+            self.multiplier += [n.multiplier]
+        self.multiplier = th.concatenate(self.multiplier, axis = 0)
+        self.bnorm = batch_norm
+
+    @property
+    def weights(self):
+        weights = []
+        for blstm in self.blstms:
+            weights += blstm.weights
+        return weights
+
+    @property
+    def units(self): return sum(blstm.units for blstm in self.blstms)
+
+    def scan(self, x, mask=None, **kwargs):
+        for blstm in self.blstms:
+            x = blstm.scan(x, mask=mask, **kwargs)
+        return x
+
+    def fold(self, x, mask=None, **kwargs):
+        for blstm in self.blstms[:-1]:
+            x = blstm.scan(x, mask=mask, **kwargs)
+        return blstms[-1].fold(x, mask=mask, **kwargs)
+
+    def unfold(self, x, steps, **kwargs):
+        x = blstms[0].unfold(x, steps, **kwargs)
+        for blstm in self.blstms[1:]:
+            x = blstm.scan(x, **kwargs)
+        return x
+
+    def update(self, history=None):
+        if history is not None:
+            if self.bnorm:
+                numw = 8 # number of weights for each layer of the BLSTM
+            else:
+                numw = 4
+            for n in range(len(self.blstms)):
+                his = [hist[numw*n:numw*(n+1)] for hist in history]
+                changes = self.blstms[n].update(history=his)
+                if n < len(self.blstms)-1:
+                    his = [hist[numw*(n+1):numw*(n+2)] for hist in history]
+                    self.blstms[n+1].update_ins(changes, history=his)
+            return changes # Returns the changes of the last layer
+        else:
+            for n in range(len(self.blstms)):
+                changes = self.blstm[n].update(history=history)
+                if n < len(self.blstms)-1:
+                    self.blstms[n+1].update_ins(changes, history=history)
+            return changes # Returns the changes of the last layer

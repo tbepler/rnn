@@ -88,17 +88,23 @@ class CRF(object):
         self.w_init.set_value(ws[1])
 
     def update(self, change, history=None):
-        #print change
-        if type(change) is int:
+        adds, dels = change
+        print "adds = %s" % adds
+        print "dels = %s" % dels
+        if adds != []:
         # Adding unit
             trans = self.w_trans.get_value()
             init = self.w_init.get_value()
             #print trans
             #print init
-            trans = np.concatenate((trans, np.random.rand(self.labels, change, self.labels)), axis = 1)
-            init = np.concatenate((init, np.random.rand(change, self.labels)))
-            print trans.shape
-            print init.shape
+            for add in adds:
+                print trans.shape
+                print init.shape
+                print add[0]
+                init = np.insert(init, add[0] + 1, np.random.rand(add[1], self.labels), axis = 0)
+                trans = np.insert(trans, [add[0] + 1], np.random.rand(self.labels, add[1], self.labels), axis = 1)
+                #print trans.shape
+                #print init.shape
             self.w_trans.set_value(trans)
             self.w_init.set_value(init)
 
@@ -106,15 +112,16 @@ class CRF(object):
                 for hist in history:
                     hist_trans = hist[0].get_value()
                     hist_init = hist[1].get_value()
-                    hist_trans = np.concatenate((hist_trans, np.zeros((self.labels, change, self.labels))), axis = 1)
-                    hist_init = np.concatenate((hist_init, np.zeros((change, self.labels))))
+                    for add in adds:
+                        hist_trans = np.insert(hist_trans, [add[0] + 1], np.random.rand(self.labels, add[1], self.labels), axis = 1)
+                        hist_init = np.insert(hist_init, add[0] + 1, np.random.rand(add[1], self.labels), axis = 0)
                     hist[0].set_value(hist_trans)
                     hist[1].set_value(hist_init)
-        else:
+        if dels != []:
         # Removing unit
             trans = self.w_trans.get_value()
             init = self.w_init.get_value()
-            for remove in change:
+            for remove in dels:
                 trans = np.delete(trans, remove + 1, 1)
                 init = np.delete(init, remove + 1, 0)
             self.w_trans.set_value(trans)
@@ -123,7 +130,9 @@ class CRF(object):
                 for hist in history:
                     hist_trans = hist[0].get_value()
                     hist_init = hist[1].get_value()
-                    for remove in change:
+                    for remove in dels:
+                        print remove
+                        print hist_trans.shape
                         hist_trans = np.delete(hist_trans, remove + 1, 1)
                         hist_init = np.delete(hist_init, remove + 1, 0)
                     hist[0].set_value(hist_trans)

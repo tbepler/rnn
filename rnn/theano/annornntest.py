@@ -26,7 +26,7 @@ def null_func(*args, **kwargs):
     pass
 
 class AnnoRNN(object):
-    def __init__(self, n_in, units, layers, labels, loss_scaler, decoder=linear.Linear, lambdal1=0.001, itype='int32', solver=solvers.RMSprop(0.1, decay=solvers.GeomDecay(0.999))):
+    def __init__(self, n_in, units, layers, labels, loss_scaler, decoder=linear.Linear, lambdal1=0.00001, itype='int32', solver=solvers.RMSprop(0.01, decay=solvers.GeomDecay(0.95))):
         self.data = [T.matrix(dtype=itype), T.matrix(dtype=itype)]
         self.x = self.data[0].astype(itype) # T.matrix(dtype=itype)
         self.y = self.data[1].astype(itype) # T.matrix(dtype=itype)
@@ -38,25 +38,33 @@ class AnnoRNN(object):
         k,b = self.x.shape
         y_layer = self.x
         #self.y_layers = []
-        lstm_layer = lstm.DiffBLSTM(n_in, units)
+        lstm_layer = lstm.LayeredBLSTM(n_in, units, layers)
         start = len(self.weights)
-        self.weights += [weight for weight in lstm_layer.weights]
+        self.weights += [weight for weights in lstm_layer.weights for weight in weights]
+        #self.weights += [weight for weight in lstm_layer.weights]
         end = len(self.weights)
         self.layerloc += [[start, end]]
-        y_layer, c = lstm_layer.scan(self.x, self.mask)
+        y_layer = lstm_layer.scan(self.x, self.mask)
         #self.y_layers.append(y_layer)
         self.yh = y_layer
-        crf_layer = crf.CRF(units, labels, loss = crf.LikelihoodAccuracy())
+        crf_layer = crf.CRF(units, labels, loss = crf.PosteriorCrossEntropy())
         start = len(self.weights)
         self.weights += [weight for weight in crf_layer.weights]
         end = len(self.weights)
         self.layerloc += [[start, end]]
         # self.yh = softmax.softmax(crf_layer)
+        print "LSTM Type: %s" % type(lstm_layer)
         loss, confusion, lastyh, self.yy= crf_layer.loss(self.yh, self.y)
-        l1 = T.sum(abs(lstm_layer.multiplier))
+        if type(lstm_layer) is (lstm.DiffLSTM or lstm.DiffBLSTM or lstm.DiffLayeredBLSTM):
+            l1 = T.sum(abs(lstm_layer.multiplier))
+        else:
+            l1 = 0
         self.lastyh = lastyh
         self.count = T.sum(self.mask)
-        self.loss_t = (T.sum(loss * T.shape_padright(self.mask) * loss_scaler))/self.count + l1*lambdal1
+        if loss_scaler is not None:
+            self.loss_t = (T.sum(loss * T.shape_padright(self.mask) * loss_scaler))/self.count + l1*lambdal1
+        else:
+            self.loss_t = (T.sum(loss * T.shape_padright(self.mask)))/self.count + l1*lambdal1
         self.confusion = confusion * T.shape_padright(T.shape_padright(self.mask))
         self.solver = solver
         # The layer that is differentiable and the one after it (needed to update weights and historical info in solver)
@@ -93,7 +101,7 @@ class AnnoRNN(object):
            
 
 
-    def fit(self, data_train, validate=None, batch_size=256, max_iters=50, callback=null_func):
+    def fit(self, data_train, validate=None, batch_size=256, max_iters=15, callback=null_func):
         steps = self.solver(BatchIter(data_train, batch_size), [self.x, self.y, self.mask, self.difflayers, self.layerloc], [self.loss_t, self.confusion, self.count], self.weights, max_iters=max_iters)
         #, [self.data, self.mask], self.loss_t, [self.correct, self.count], max_iters=max_iters)
         if validate is not None:
@@ -183,8 +191,8 @@ class AnnoRNN(object):
             #print loss
             #print batch[1]
             #print confusion
-            print np.array(T.argmax(yh, axis = 2).eval())
-            print yy
+            #print np.array(T.argmax(yh, axis = 2).eval())
+            #print yy
 	print "Batch accuracy:"
 	print float(train_correct)/train_n
 
@@ -237,39 +245,45 @@ def import_seq_data(filename):
 if __name__ == '__main__':
     currentTime = datetime.now() 
     startTime = currentTime
-    #orig_stdout = sys.stdout
-    #f = file('outnew.txt', 'w')
-    #sys.stdout = f
+    orig_stdout = sys.stdout
+    f = file('NoDiffPCE.txt', 'w')
+    sys.stdout = f
+    use_predata = True
 
-    sequences, ss_labels, labels, label_frequencies = import_seq_data("uniprot_human.txt")
+    if use_predata:
+        sequences, ss_labels, labels, label_frequencies = np.load('train_predata.npy') 
+        test_sequences, test_ss_labels, _, _ = np.load('test_predata.npy')
+    else:
+        sequences, ss_labels, labels, label_frequencies = import_seq_data("uniprot_human.txt")
     a = np.array(ss_labels)
     #print 1-float(sum([c>0 for b in a for c in b]))/sum([len(b)for b in a])
     samples = 20
     train_split = 0.7
     layers = 2
-    units = 10
+    units = 200
+    print label_frequencies
     label_frequencies = [math.sqrt(l) for l in label_frequencies]
     total_labels = sum(label_frequencies)
-    #print label_frequencies
     loss_scaler = [0 if freq == 0 else float(total_labels)/freq for freq in label_frequencies]
-    #print loss_scaler
+    loss_scaler = None
     model = AnnoRNN(samples, units, layers, labels, loss_scaler)
     # data = np.random.randint(0, labels-1, (length, samples)).astype(np.int32)
     # labeled_data = data
     # print data
-    data = np.array([sequences, ss_labels])[:, :10]
-    print data.shape
-    print "Inputs: %d" % len(data[0])
+    if use_predata:
+        train_data = np.array([sequences, ss_labels])
+        test_data = np.array([test_sequences, test_ss_labels])
+    else:
+        data = np.array([sequences, ss_labels])
+        print data.shape
+        #print data.shape
+        train_data, test_data = np.hsplit(data, [int(train_split*data.shape[1])])
+        #print train_data.shape
+        #print test_data.shape
+        #print data
+    print "Training Inputs: %d" % len(train_data[0])
     print "Layers: %d" % layers
     print "Units: %d" % units
-    #print data.shape
-    train_data, test_data = np.hsplit(data, [int(train_split*data.shape[1])])
-    #print train_data.shape
-    #print test_data.shape
-    #print data
-    #iterator = model.batch_iter(data, 64)
-    #for i in iterator:
-    #    model.fit(i)
     print "Data preprocessing time: %s" % (datetime.now() - currentTime)
     currentTime = datetime.now()
 

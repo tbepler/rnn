@@ -1,6 +1,8 @@
 import theano
 import theano.tensor as th
 import numpy as np
+import lstm
+from theano.compile.nanguardmode import NanGuardMode
 
 class NoDecay(object):
     def __call__(self, lr):
@@ -64,23 +66,20 @@ class SGD(object):
         while i < max_iters or max_iters < 0:
             j = 0.0
             for args in data:
-                self.update_solver()
                 #print args
                 ret = f(self.learning_rate, *args)
                 j += 1
                 yield i+j/n, ret
             i += 1
             self.learning_rate = self.decay(self.learning_rate)
-            # Layer 0 updates and updates the historical data
-            print layerloc
-            change = layers[0].update(history=[self.history[layerloc[0][0]:layerloc[0][1]], self.velocity[layerloc[0][0]:layerloc[0][1]]])
-            if change != 0:
-                # Layer 0's updates are passed into Layer 1 along with shared variables that need to be updated for the solver (history)
-                layers[1].update(change, history=[self.history[layerloc[1][0]:layerloc[1][1]], self.velocity[layerloc[1][0]:layerloc[1][1]]])
-
-    def update_solver(change):
-        # update shared variables
-        return
+            # Layer 0 updates and updates the historical data 
+            # where change[0] are the additions and change[1] are the deletions from the outputs of layer 0
+            if type(layers[0]) == lstm.DiffLSTM or type(layers[0]) == lstm.DiffBLSTM or type(layers[0]) == lstm.DiffLayeredBLSTM:
+                change = layers[0].update(history=[self.history[layerloc[0][0]:layerloc[0][1]], self.velocity[layerloc[0][0]:layerloc[0][1]]])
+                print change
+                if change[0] != [] or change[1] != []:
+                    # Layer 0's updates are passed into Layer 1 along with shared variables that need to be updated for the solver (history)
+                    layers[1].update(change, history=[self.history[layerloc[1][0]:layerloc[1][1]], self.velocity[layerloc[1][0]:layerloc[1][1]]])
 
 class RMSprop(SGD):
     def __init__(self, lr, rho=0.95, eps=1e-5, momentum=0.9, decay=NoDecay()):
@@ -95,8 +94,3 @@ class RMSprop(SGD):
         hist_upd = [self.rho*h + (1-self.rho)*g*g for h,g in zip(self.history, grads)]
         delta = [g/(th.sqrt(h)+self.eps) for g,h in zip(grads, hist_upd)]
         return delta, zip(self.history, hist_upd)
-
-    def update_solver(self):
-        # updates the history shared variables
-        print "printing"
-        print [w.get_value().shape for w in self.history]
