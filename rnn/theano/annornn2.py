@@ -16,6 +16,7 @@ import linear
 import softmax
 import crossent
 import crf
+import itertools
 
 from rnn.minibatcher import BatchIter
 
@@ -26,7 +27,7 @@ def null_func(*args, **kwargs):
     pass
 
 class AnnoRNN(object):
-    def __init__(self, n_in, units, labels, loss_scaler, decoder=linear.Linear, lambdal1=0.00001, itype='int32', solver=solvers.RMSprop(0.0003, decay=solvers.GeomDecay(0.97))):
+    def __init__(self, n_in, units, labels, loss_scaler, sections=3, decoder=linear.Linear, lambdal1=0.00001, lambdal2=0, lambdaprll=0.01, itype='int32', solver=solvers.RMSprop(0.01, decay=solvers.GeomDecay(0.97))):
         self.data = [T.matrix(dtype=itype), T.matrix(dtype=itype)]
         self.x = self.data[0].astype(itype) # T.matrix(dtype=itype)
         self.y = self.data[1].astype(itype) # T.matrix(dtype=itype)
@@ -38,17 +39,35 @@ class AnnoRNN(object):
         k,b = self.x.shape
         y_layer = self.x
         #self.y_layers = []
-        lstm_layer = lstm.LayeredBLSTM(n_in, units, batch_norm = True)
+        lstm_layer = lstm.ParallelLSTM(n_in, units[0], sections, batch_norm = False)
         start = len(self.weights)
         #self.weights += [weight for weights in lstm_layer.weights for weight in weights]
         self.weights += lstm_layer.weights
+        if lambdal2 != None:
+            l2 = lstm_layer.l2
+        else:
+            l2 = 0
         print self.weights
         end = len(self.weights)
         self.layerloc += [[start, end]]
-        y_layer = lstm_layer.scan(self.x, mask=self.mask)
+        y_layer, _ = lstm_layer.scanl(self.x, mask=self.mask)
+
+
+        # For parallel layers, calculate additional cost function for dot product of outputs for each section
+        if type(lstm_layer) == lstm.ParallelLSTM:
+            y_sections = []
+            secunits = lstm_layer.secunits
+            for i in range(lstm_layer.sections):
+                y_sections += [y_layer[:,:,i*secunits:(i+1)*secunits]]
+            parallel_loss = 0
+            for pair in itertools.combinations(y_sections,2):
+                parallel_loss += T.sum(abs(T.tensordot(pair[0], pair[1], axes = [[0,1,2],[0,1,2]])))
+        else:
+            parallel_loss = 0
+
         #self.y_layers.append(y_layer)
         self.yh = y_layer
-        crf_layer = crf.CRF(units[-1], labels, loss = crf.LikelihoodCrossEntropy())
+        crf_layer = crf.CRF(units[-1]*sections, labels, loss = crf.LikelihoodCrossEntropy())
         start = len(self.weights)
         self.weights += crf_layer.weights
         print self.weights
@@ -63,10 +82,13 @@ class AnnoRNN(object):
             l1 = 0
         self.lastyh = lastyh
         self.count = T.sum(self.mask)
-        if loss_scaler is not None:
-            self.loss_t = (T.sum(loss * T.shape_padright(self.mask) * loss_scaler))/self.count + l1*lambdal1
-        else:
-            self.loss_t = (T.sum(loss * T.shape_padright(self.mask)))/self.count + l1*lambdal1
+        if loss_scaler == None:
+            loss_scaler = 1
+        print lambdaprll
+        print lambdal2
+        print lambdal1
+        self.loss_t = (T.sum(loss * T.shape_padright(self.mask) * loss_scaler))/self.count + l1*lambdal1 + l2*lambdal2 + parallel_loss*lambdaprll + lambdal1*(T.sum(crf_layer.weights[0]) + T.sum(crf_layer.weights[1]))
+
         self.confusion = confusion * T.shape_padright(T.shape_padright(self.mask))
         self.solver = solver
         # The layer that is differentiable and the one after it (needed to update weights and historical info in solver)
@@ -103,7 +125,7 @@ class AnnoRNN(object):
            
 
 
-    def fit(self, data_train, validate=None, batch_size=256, max_iters=10, callback=null_func):
+    def fit(self, data_train, validate=None, batch_size=256, max_iters=200, callback=null_func):
         steps = self.solver(BatchIter(data_train, batch_size), [self.x, self.y, self.mask, self.difflayers, self.layerloc], [self.loss_t, self.confusion, self.count], self.weights, max_iters=max_iters)
         #, [self.data, self.mask], self.loss_t, [self.correct, self.count], max_iters=max_iters)
         if validate is not None:
@@ -247,10 +269,10 @@ def import_seq_data(filename):
 if __name__ == '__main__':
     currentTime = datetime.now() 
     startTime = currentTime
-    orig_stdout = sys.stdout
-    f = file('NoDiffBaNormPCE.txt', 'w')
-    sys.stdout = f
-    use_predata = True
+    #orig_stdout = sys.stdout
+    #f = file('NoDiffBaNormPCE.txt', 'w')
+    #sys.stdout = f
+    use_predata = False
 
     if use_predata:
         sequences, ss_labels, labels, label_frequencies = np.load('train_predata.npy') 
@@ -261,7 +283,7 @@ if __name__ == '__main__':
     #print 1-float(sum([c>0 for b in a for c in b]))/sum([len(b)for b in a])
     samples = 20
     train_split = 0.7
-    units = [100, 100]
+    units = [10]
     print label_frequencies
     label_frequencies = [math.sqrt(l) for l in label_frequencies]
     total_labels = sum(label_frequencies)
@@ -288,7 +310,7 @@ if __name__ == '__main__':
     print "Data preprocessing time: %s" % (datetime.now() - currentTime)
     currentTime = datetime.now()
 
-    fit_data = model.fit(train_data, batch_size = 50)
+    fit_data = model.fit(train_data, batch_size = 15)
 
     print "Model construction time: %s" % (datetime.now() - currentTime)
     currentTime = datetime.now()
@@ -303,7 +325,7 @@ if __name__ == '__main__':
         currentTime = datetime.now()
 
     print "Begin testing"
-    test_data = model.testing(test_data, batch_size = 50)
+    test_data = model.testing(test_data, batch_size = 15)
     print test_data
     print "Testing time: %s" % (datetime.now() - currentTime)
     currentTime = datetime.now()

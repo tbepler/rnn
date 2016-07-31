@@ -180,6 +180,10 @@ class LSTM(object):
     @property
     def units(self): return self.ws.get_value(borrow=True).shape[1]//4
 
+    @property
+    def l2(self):
+        return th.sum(self.weights[0]**2)
+
     def delete(self, del_units, history=None):
         #print del_units
         weights = self.ws.get_value()
@@ -373,6 +377,10 @@ class LayeredLSTM(object):
            weights += lstm.weights
         return weights
 
+    @property
+    def l2(self):
+        return sum(lstm.l2 for lstm in self.lsmts)
+
     def split(self, vector):
         if vector is not None:
             splits = []
@@ -412,6 +420,10 @@ class BLSTM(object):
     @property
     def units(self): return self.nl + self.nr
 
+    @property
+    def l2(self):
+        return self.lstml.l2 + self.lstmr.l2
+
     def __call__(self, x, mask=None, **kwargs):
         return self.scan(x, mask=mask, **kwargs)
 
@@ -447,6 +459,10 @@ class LayeredBLSTM(object):
     @property
     def units(self): return sum(blstm.units for blstm in self.blstms)
 
+    @property
+    def l2(self):
+        return sum(blstm.l2 for blstm in self.blstms)
+
     def scan(self, x, mask=None, **kwargs):
         for blstm in self.blstms:
             x = blstm.scan(x, mask=mask, **kwargs)
@@ -464,7 +480,7 @@ class LayeredBLSTM(object):
         return x
 
 class DiffLSTM(object):
-    def __init__(self, ins, units, batch_norm = False, Td=0.05, k=2, Mmin=0.025, Padd=0.5, Pdel=0.5, **kwargs):
+    def __init__(self, ins, units, batch_norm = False, Td=0.05, k=5, Mmin=0.025, Padd=0.5, Pdel=0.5, **kwargs):
         self.lstm = LSTM(ins, units, **kwargs)
         self.Td = Td # Deletion Threshold - if falls below threshold then marked for possible deletion
         self.k = k # Number of units with multiplier below threshold (will adjust number of units if less/more than k)
@@ -486,6 +502,10 @@ class DiffLSTM(object):
             return self.lstm.weights + [self.multiplier] + self.norm.weights()
         else:
             return self.lstm.weights + [self.multiplier]
+
+    @property
+    def l2(self):
+        return self.lstm.l2
 
     def update(self, history=None):
         #multip = np.absolute(self.multiplier.get_value())
@@ -618,6 +638,10 @@ class DiffBLSTM(object):
     def units(self): return self.nl + self.nr
 
     @property
+    def l2(self):
+        return self.lstml.l2 + self.lstmr.l2
+
+    @property
     def nl(self): return self.lstml.units
 
     @property
@@ -716,6 +740,10 @@ class DiffLayeredBLSTM(object):
     @property
     def units(self): return sum(blstm.units for blstm in self.blstms)
 
+    @property
+    def l2(self):
+        return sum(blstm.l2 for blstm in self.blstms)
+
     def scan(self, x, mask=None, **kwargs):
         for blstm in self.blstms:
             x = blstm.scan(x, mask=mask, **kwargs)
@@ -751,3 +779,35 @@ class DiffLayeredBLSTM(object):
                 if n < len(self.blstms)-1:
                     self.blstms[n+1].update_ins(changes, history=history)
             return changes # Returns the changes of the last layer
+
+# LSTM whose units are separated into n equal sized sections.
+# The output from each section is dotted with the others and added to the loss
+# This should force the outputs of each section to be different as to capture independent aspects of the model
+# If multiple sections fall below the threshold, they are deleted
+# If there are not enough sections below the threshold, more are added
+# No multiplier right now
+class ParallelLSTM(DiffLSTM):
+    def __init__(self, ins, units, sections, batch_norm=False, **kwargs):
+        DiffLSTM.__init__(self, ins, units*sections, batch_norm, **kwargs)
+        self.secunits = units
+
+    @property
+    def sections(self): return DiffLSTM.units.fget(self) / self.secunits
+
+    @property
+    def weights(self): return self.lstm.weights
+
+    #def update(self, history=None):
+        # Todo: make update function
+
+    def scanl(self, x, y0=None, c0=None, mask=None, **kwargs):
+        y, c = self.lstm.scanl(x, y0=None, c0=None,  mask = mask, **kwargs)
+        if self.norm != None:
+            y = self.norm.scan(y)
+        return y, c
+
+    def scanr(self, x, y0=None, c0=None, mask=None, **kwargs):
+        y, c = self.lstm.scanr(x, y0=None, c0=None,  mask = mask, **kwargs)
+        if self.norm != None:
+            y = self.norm.scan(y)
+        return y, c
