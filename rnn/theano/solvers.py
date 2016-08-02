@@ -23,7 +23,7 @@ class Momentum(object):
     def __call__(self, deltas):
         if self.momentum > 0:
             vel_upd = [self.momentum*v + (1-self.momentum)*d for v,d in zip(self.velocity,deltas)]
-            return vel_upd, zip(self.velocity, vel_upd)
+            return vel_upd, list(zip(self.velocity, vel_upd))
         return deltas, []
 
 class SGD(object):
@@ -76,6 +76,6 @@ class RMSprop(SGD):
         history = [theano.shared(w.get_value()*0+self.init_norm) for w in weights]
         hist_upd = [self.rho*h + (1-self.rho)*g*g for h,g in zip(history, grads)]
         delta = [g/(th.sqrt(h)+self.eps) for g,h in zip(grads, hist_upd)]
-        return delta, zip(history, hist_upd)
+        return delta, list(zip(history, hist_upd))
 
             

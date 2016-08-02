@@ -1,6 +1,7 @@
 import numpy as np
 import theano
 import theano.tensor as T
+import six
 
 def as_numpy(x):
     if type(x).__module__ == np.__name__:
@@ -30,37 +31,53 @@ def type_signature(args, kwargs, flags, kw_flags):
     for x in args:
         if type(x).__module__.startswith('theano.tensor'):
             return None
-    for x in kwargs.itervalues():
+    for x in six.itervalues(kwargs):
         if type(x).__module__.startswith('theano.tensor'):
             return None
     # make sure all types are numpy
     args = [as_numpy(x) for x in args]
-    kwargs = {k:as_numpy(v) for k,v in kwargs.iteritems()}
+    kwargs = {k:as_numpy(v) for k,v in six.iteritems(kwargs)}
     # make type signature
     args = [as_type(x) for x in args]
-    kwargs = {k:as_type(v) for k,v in kwargs.iteritems()}
-    return tuple(args), tuple(kwargs.iteritems())
+    kwargs = {k:as_type(v) for k,v in six.iteritems(kwargs)}
+    return tuple(args), tuple(six.iteritems(kwargs))
 
-def build_graph(f, sign):
+def build_graph(f, sign, self=None):
     args, kwargs = sign 
     args = [as_variable(x) for x in args]
     kwargs = {k:as_variable(v, name=k) for k,v in kwargs}
-    return f(*args, **kwargs), args+kwargs.values()
+    if self is None:
+        return f(*args, **kwargs), args+list(kwargs.values())
+    else:
+        return f(self, *args, **kwargs), args+list(kwargs.values())
 
-def theano_compile(f):
-    table = {} #dispatch table
-    def dispatch(*args, **kwargs):
-        sign = type_signature(*args, **kwargs)
-        if sign is None: #this is already part of a theano graph, just call and return
-            return f(*args, **kwargs)
-        #retrieve specialized function from dispatch table
-        if sign in table:
-            return table[sign](*args, **kwargs)
-        y, x = build_graph(f, sign)
-        theano_f = theano.function(x, y)
-        table[sign] = theano_f
-        return theano_f(*args, **kwargs)
-    return dispatch
+def theano_compile(updates=False, class_method=False):
+    def theano_compile_inner(f):
+        table = {} #dispatch table
+        def dispatch(*args, **kwargs):
+            self = None
+            if class_method:
+                self = args[0]
+                args = args[1:]
+            sign = type_signature(args, kwargs, [], {})
+            if sign is None: #this is already part of a theano graph, just call and return
+                if self is None:
+                    return f(*args, **kwargs)
+                else:
+                    return f(self, *args, **kwargs)
+            #retrieve specialized function from dispatch table
+            if sign in table:
+                return table[sign](*args, **kwargs)
+            y, x = build_graph(f, sign, self=self)
+            if updates:
+                y, update = y
+                theano_f = theano.function(x, y, updates=update)
+            else:
+                theano_f = theano.function(x, y)
+            table[sign] = theano_f
+            return theano_f(*args, **kwargs)
+        return dispatch
+    return theano_compile_inner
 
 def get_flag(name, ignore, const):
     if name in ignore:

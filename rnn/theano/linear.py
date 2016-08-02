@@ -2,7 +2,7 @@ import theano
 import theano.tensor as T
 import numpy as np
 
-from softmax import logsoftmax
+from rnn.theano.softmax import logsoftmax
 from rnn.initializers import orthogonal
 
 class Linear(object):

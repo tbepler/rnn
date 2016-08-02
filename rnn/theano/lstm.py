@@ -1,8 +1,10 @@
+from __future__ import division
+
 import theano
 import theano.tensor as th
 import numpy as np
 
-from activation import fast_tanh, fast_sigmoid
+from rnn.theano.activation import fast_tanh, fast_sigmoid
 from rnn.initializers import orthogonal
 
 def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmoid, gact=fast_tanh
@@ -27,7 +29,7 @@ def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmo
     return y, c
 
 def split(w):
-    m = w.shape[1]/4
+    m = w.shape[1]//4
     n = w.shape[0] - m - 1
     return w[0], w[1:n+1], w[n+1:]
 
