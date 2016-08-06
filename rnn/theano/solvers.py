@@ -9,8 +9,8 @@ class NoDecay(object):
 class GeomDecay(object):
     def __init__(self, rate):
         self.rate = rate
-    def __call__(self, lr):
-        return lr*self.rate
+    def __call__(self, lr, iters=1):
+        return lr*self.rate**iters
 
 class Momentum(object):
     def __init__(self, momentum, weights):
@@ -66,16 +66,16 @@ class SGD(object):
             self.learning_rate = self.decay(self.learning_rate)
 
 class RMSprop(SGD):
-    def __init__(self, lr, rho=0.95, eps=1e-5, init_norm=1.0, momentum=0.9, decay=NoDecay()):
+    def __init__(self, lr, rho=0.95, eps=1e-5, momentum=0.9, decay=NoDecay()):
         super(RMSprop, self).__init__(lr, momentum=momentum, decay=decay)
         self.rho = rho
         self.eps = eps
-        self.init_norm = init_norm
     
     def _unscaled_deltas(self, weights, grads):
-        history = [theano.shared(w.get_value()*0+self.init_norm) for w in weights]
-        hist_upd = [self.rho*h + (1-self.rho)*g*g for h,g in zip(history, grads)]
+        rho = theano.shared(np.cast[theano.config.floatX](0))
+        history = [theano.shared(w.get_value()*0) for w in weights]
+        hist_upd = [rho*h + (1-rho)*g*g for h,g in zip(history, grads)]
         delta = [g/(th.sqrt(h)+self.eps) for g,h in zip(grads, hist_upd)]
-        return delta, list(zip(history, hist_upd))
+        return delta, list(zip(history, hist_upd))+[(rho, self.rho)]
 
             

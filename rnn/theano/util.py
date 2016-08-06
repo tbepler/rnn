@@ -69,11 +69,15 @@ def theano_compile(updates=False, class_method=False):
             if sign in table:
                 return table[sign](*args, **kwargs)
             y, x = build_graph(f, sign, self=self)
+            #from theano.compile.nanguardmode import NanGuardMode
+            #mode = NanGuardMode(nan_is_error=True)
             if updates:
                 y, update = y
                 theano_f = theano.function(x, y, updates=update)
+                #theano_f = theano.function(x, y, updates=update, mode=mode)
             else:
                 theano_f = theano.function(x, y)
+                #theano_f = theano.function(x, y, mode=mode)
             table[sign] = theano_f
             return theano_f(*args, **kwargs)
         return dispatch
