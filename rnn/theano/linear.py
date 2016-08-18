@@ -6,9 +6,9 @@ from rnn.theano.softmax import logsoftmax
 from rnn.initializers import orthogonal
 
 class Linear(object):
-    def __init__(self, n_in, n_out, init=orthogonal, dtype=theano.config.floatX, name=None):
+    def __init__(self, n_in, n_out, init=orthogonal, init_bias=0, dtype=theano.config.floatX, name=None):
         w = np.random.randn(n_in+1, n_out).astype(dtype)
-        w[0] = 0
+        w[0] = init_bias
         init(w[1:])
         self.ws = theano.shared(w, name=name)
         self.name = name

@@ -12,6 +12,12 @@ class GeomDecay(object):
     def __call__(self, lr, iters=1):
         return lr*self.rate**iters
 
+class Annealing(object):
+    def __init__(self, T):
+        self.T = T
+    def __call__(self, lr, iters=1):
+        return lr/(1+iters/self.T)
+
 class Momentum(object):
     def __init__(self, momentum, weights):
         self.momentum = momentum
@@ -22,7 +28,8 @@ class Momentum(object):
 
     def __call__(self, deltas):
         if self.momentum > 0:
-            vel_upd = [self.momentum*v + (1-self.momentum)*d for v,d in zip(self.velocity,deltas)]
+            mom_m1 = np.array(1-self.momentum, dtype=theano.config.floatX)
+            vel_upd = [self.momentum*v + mom_m1*d for v,d in zip(self.velocity,deltas)]
             return vel_upd, list(zip(self.velocity, vel_upd))
         return deltas, []
 

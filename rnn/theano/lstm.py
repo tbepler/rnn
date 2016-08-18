@@ -20,12 +20,12 @@ def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmo
         c = theano.gradient.grad_clip(c, -clip, clip)
     y = activation(o*cact(c))
     if mask is not None:
-        #mask = th.shape_padright(mask)
-        I = (1-mask).nonzero()
-        y = th.set_subtensor(y[I], y0[I])
-        c = th.set_subtensor(c[I], c0[I])
-        #y = y*mask + y0*(1-mask)
-        #c = c*mask + c0*(1-mask)
+        #I = (1-mask).nonzero()
+        #y = th.set_subtensor(y[I], y0[I])
+        #c = th.set_subtensor(c[I], c0[I])
+        mask = th.shape_padright(mask)
+        y = y*mask + y0*(1-mask)
+        c = c*mask + c0*(1-mask)
     return y, c
 
 def split(w):
@@ -73,54 +73,24 @@ def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
     else:
         f = lambda g, yp, cp, wy: step(g, yp, cp, wy, **kwargs)
         seqs = ifog
-    if unroll > 1:
-        def _unroll_step(*args):
-            g = args[0]
+    if unroll > 0:
+        #perform loop in the fixed length unroll size - in other words, inputs MUST be of this length
+        ys = []
+        cs = []
+        #Y = th.zeros((unroll,)+y0.shape)
+        #C = th.zeros((unroll,)+c0.shape)
+        for i in range(unroll):
             if mask is not None:
-                m = args[1]
-                args = args[1:]
+                m = mask[i]
             else:
                 m = None
-            yp, cp, wy = args[1], args[2], args[3]
-            yp, cp = yp[-1], cp[-1]
-            ys, cs = [], []
-            for j in xrange(unroll):
-                mj = m[j] if m is not None else None
-                yp, cp = step(g[j], yp, cp, wy, mask=mj, **kwargs)
-                ys.append(yp)
-                cs.append(cp)
-            return th.stack(ys), th.stack(cs)
-        #align the sequences to mulitples of unroll
-        pad = (unroll - n % unroll) % unroll
-        ifog = th.concatenate([ifog, th.zeros((pad, ifog.shape[1], ifog.shape[2]), dtype=ifog.dtype)], axis=0)
-        if mask is not None:
-            mask = th.concatenate([mask, th.zeros((pad, mask.shape[1]), dtype=mask.dtype)], axis=0)
-        #reshape the sequences into chunks of size unroll
-        chunks = (n+pad) // unroll
-        ifog = ifog.reshape((chunks, unroll, ifog.shape[1], ifog.shape[2]))
-        if mask is not None:
-            mask = mask.reshape((chunks, unroll, mask.shape[1]))
-        #peel the list to align
-        pad_y0, pad_c0 = th.tile(th.shape_padleft(y0), (unroll, 1, 1)), th.tile(th.shape_padleft(c0), (unroll, 1, 1))
-        #have to unbroadcast the below or ifelse complains about type mismatch......
-        #pad_y0, pad_c0 = th.unbroadcast(th.shape_padleft(y0), 0), th.unbroadcast(th.shape_padleft(c0), 0)
-        if mask is not None:
-            seqs = [ifog, mask]
-        else:
-            seqs = [ifog]
-        [y, c], _ = op(_unroll_step, seqs, [pad_y0, pad_c0], non_sequences=wy)
-        #flatten y and c chunks and truncate to n
-        y = th.reshape(y, flatten_left(y.shape))[:n]
-        c = th.reshape(c, flatten_left(c.shape))[:n]
-        #compute and append peeled y and c
-        #seqs_peel = [ifog[-peel:], mask[-peel:]] if mask is not None else [ifog[-peel:]]
-        #[ypeel, cpeel], _ = op(f, seqs_peel, [y[-1], c[-1]], non_sequences=wy) 
-        #y_with_peel, c_with_peel = th.concatenate([y, ypeel], axis=0), th.concatenate([c, cpeel], axis=0)
-        #from theano.ifelse import ifelse
-        #y, c = ifelse(peel > 0, (y_with_peel, c_with_peel), (y, c))
-        #ypeel, cpeel = ifelse(peel > 0, (ypeel, cpeel), (pad_y0, pad_c0))
-        #idxs = th.arange(peel, n, unroll)
-        #y, c = ifelse(peel > 0, (th.concatenate([ypeel, y], axis=0), th.concatenate([cpeel, c], axis=0)), (y,c))
+            yi, ci = step(ifog[i], y0, c0, wy, mask=m, **kwargs)
+            ys.append(yi)
+            cs.append(ci)
+            #Y = th.set_subtensor(Y[i], yi)
+            #C = th.set_subtensor(C[i], ci)
+            y0, c0 = yi, ci
+        y, c = th.stack(ys, axis=0), th.stack(cs, axis=0) 
     else:
         #from theano.compile.nanguardmode import NanGuardMode
         #mode = NanGuardMode(nan_is_error=True, inf_is_error=False, big_is_error=False)
@@ -196,15 +166,19 @@ class LSTM(object):
 
     def build_init_states(self, x, y0, c0):
         if 'int' in x.dtype:
-            shape = x.shape[1:]
+            b = x.shape[1]
+            #shape = x.shape[1:]
         else:
-            shape = x.shape[1:-1]
-        z = th.shape_padright(th.zeros(shape))
+            #shape = x.shape[1:-1]
+            b = x.shape[1]
+        #z = th.shape_padright(th.zeros(shape))
         if y0 is None:
-            y0 = self.y0
+            y0 = th.tile(th.shape_padleft(self.y0), (b,1))
+            #y0 = self.y0
         if c0 is None:
-            c0 = self.c0
-        return z+y0, z+c0
+            c0 = th.tile(th.shape_padleft(self.c0), (b,1))
+            #c0 = self.c0
+        return y0, c0
 
     def scanl(self, x, y0=None, c0=None, mask=None, **kwargs):
         y0, c0 = self.build_init_states(x, y0, c0)
