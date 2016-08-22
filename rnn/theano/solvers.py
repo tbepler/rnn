@@ -38,6 +38,7 @@ class SGD(object):
         self.learning_rate = learning_rate
         self.momentum = momentum
         self.decay = decay
+        self.iters = theano.shared(0)
 
     def _unscaled_deltas(self, weights, grads):
         return grads, []
@@ -46,8 +47,9 @@ class SGD(object):
         delta, updates = self._unscaled_deltas(weights, grads)
         mom = Momentum(self.momentum, weights)
         mom_delta, mom_updates = mom(delta)
-        w_upd = [(w, w-learning_rate*md) for w,md in zip(weights, mom_delta)]
-        return updates + mom_updates + w_upd
+        nu = self.decay(learning_rate, iters=self.iters)
+        w_upd = [(w, w-nu*md) for w,md in zip(weights, mom_delta)]
+        return updates + mom_updates + w_upd + [(self.iters, self.iters+1)]
 
     def _compile(self, inputs, outputs, weights, grads):
         learning_rate = th.scalar()
@@ -83,6 +85,6 @@ class RMSprop(SGD):
         history = [theano.shared(w.get_value()*0) for w in weights]
         hist_upd = [rho*h + (1-rho)*g*g for h,g in zip(history, grads)]
         delta = [g/(th.sqrt(h)+self.eps) for g,h in zip(grads, hist_upd)]
-        return delta, list(zip(history, hist_upd))+[(rho, self.rho)]
+        return delta, list(zip(history, hist_upd))+[(rho, th.constant(self.rho))]
 
             

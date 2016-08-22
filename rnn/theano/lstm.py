@@ -23,7 +23,8 @@ def step(ifog, y0, c0, wy, iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmo
         #I = (1-mask).nonzero()
         #y = th.set_subtensor(y[I], y0[I])
         #c = th.set_subtensor(c[I], c0[I])
-        mask = th.shape_padright(mask)
+        if mask.ndim < y.ndim:
+            mask = th.shape_padright(mask)
         y = y*mask + y0*(1-mask)
         c = c*mask + c0*(1-mask)
     return y, c
@@ -63,7 +64,7 @@ def unfoldr(w, y0, c0, x, steps, mask=None, **kwargs):
     y,c = unfoldl(w, y0, c0, x, steps, mask=mask, **kwargs)
     return y[::-1], c[::-1]
 
-def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
+def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, scan_kwargs={}, **kwargs):
     b, wx, wy = split(w)
     n = x.shape[0]
     ifog = gates(b, wx, x)
@@ -95,7 +96,7 @@ def lstm(w, y0, c0, x, mask=None, op=theano.scan, unroll=-1, **kwargs):
         #from theano.compile.nanguardmode import NanGuardMode
         #mode = NanGuardMode(nan_is_error=True, inf_is_error=False, big_is_error=False)
         #[y, c], _ = op(f, seqs, [y0, c0], non_sequences=wy, mode=mode)
-        [y, c], _ = op(f, seqs, [y0, c0], non_sequences=wy)
+        [y, c], _ = op(f, seqs, [y0, c0], non_sequences=wy, **scan_kwargs)
     return y, c
 
 def scanl(w, y0, c0, x, mask=None, **kwargs):
@@ -180,15 +181,15 @@ class LSTM(object):
             #c0 = self.c0
         return y0, c0
 
-    def scanl(self, x, y0=None, c0=None, mask=None, **kwargs):
+    def scanl(self, x, y0=None, c0=None, mask=None, scan_kwargs={}, **kwargs):
         y0, c0 = self.build_init_states(x, y0, c0)
         return scanl(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
-                     , gact=self.gact, cact=self.cact, **kwargs)
+                     , gact=self.gact, cact=self.cact, scan_kwargs=scan_kwargs, **kwargs)
 
-    def scanr(self, x, y0=None, c0=None, mask=None, **kwargs):
+    def scanr(self, x, y0=None, c0=None, mask=None, scan_kwargs={}, **kwargs):
         y0, c0 = self.build_init_states(x, y0, c0)
         return scanr(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
-                     , gact=self.gact, cact=self.cact, **kwargs)
+                     , gact=self.gact, cact=self.cact, scan_kwargs={}, **kwargs)
 
     def foldl(self, x, y0=None, c0=None, mask=None, **kwargs):
         if y0 is None:
