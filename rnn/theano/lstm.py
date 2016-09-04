@@ -119,8 +119,8 @@ def foldr(w, y0, c0, x, mask=None, **kwargs):
 class LSTM(object):
     def __init__(self, ins, units, init=orthogonal, name=None, dtype=theano.config.floatX
                  , iact=fast_sigmoid, fact=fast_sigmoid, oact=fast_sigmoid, gact=fast_tanh
-                 , cact=fast_tanh, forget_bias=3):
-        w = np.random.randn(1+units+ins, 4*units).astype(dtype)
+                 , cact=fast_tanh, forget_bias=3, random=np.random):
+        w = random.randn(1+units+ins, 4*units).astype(dtype)
         w[0] = 0
         w[0,units:2*units] = forget_bias
         init(w[1:])

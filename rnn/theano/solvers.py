@@ -1,9 +1,10 @@
 import theano
 import theano.tensor as th
 import numpy as np
+import copy
 
 class NoDecay(object):
-    def __call__(self, lr):
+    def __call__(self, lr, **kwargs):
         return lr
 
 class GeomDecay(object):
@@ -26,6 +27,13 @@ class Momentum(object):
         else:
             self.velocity = []
 
+    def __getstate__(self):
+        return (self.momentum, [v.get_value() for v in self.velocity])
+
+    def __setstate__(self, s):
+        self.momentum, vs = s
+        self.velocity = [theano.shared(v) for v in vs]
+
     def __call__(self, deltas):
         if self.momentum > 0:
             mom_m1 = np.array(1-self.momentum, dtype=theano.config.floatX)
@@ -40,13 +48,24 @@ class SGD(object):
         self.decay = decay
         self.iters = theano.shared(0)
 
+    def setup(self, weights):
+        self.mom = Momentum(self.momentum, weights)
+
+    def __getstate__(self):
+        d = copy.copy(self.__dict__)
+        d['iters'] = self.iters.get_value()
+        return d
+
+    def __setstate__(self, s):
+        self.__dict__.update(s)
+        self.iters = theano.shared(self.iters)
+
     def _unscaled_deltas(self, weights, grads):
         return grads, []
 
     def _updates(self, weights, grads, learning_rate):
         delta, updates = self._unscaled_deltas(weights, grads)
-        mom = Momentum(self.momentum, weights)
-        mom_delta, mom_updates = mom(delta)
+        mom_delta, mom_updates = self.mom(delta)
         nu = self.decay(learning_rate, iters=self.iters)
         w_upd = [(w, w-nu*md) for w,md in zip(weights, mom_delta)]
         return updates + mom_updates + w_upd + [(self.iters, self.iters+1)]
@@ -79,12 +98,41 @@ class RMSprop(SGD):
         super(RMSprop, self).__init__(lr, momentum=momentum, decay=decay)
         self.rho = rho
         self.eps = eps
+
+    def setup(self, weights):
+        super(RMSprop, self).setup(weights)
+        self.rho_shared = theano.shared(np.cast[theano.config.floatX](0))
+        self.history = [theano.shared(w.get_value()*0) for w in weights]
+
+    def __getstate__(self):
+        d = super(RMSprop, self).__getstate__()
+        if 'rho_shared' in d:
+            d['rho_shared'] = self.rho_shared.get_value()
+        if 'history' in d:
+            d['history'] = [h.get_value() for h in self.history]
+        return d
+
+    def __setstate__(self, d):
+        super(RMSprop, self).__setstate__(d)
+        if hasattr(self, 'rho_shared'):
+            self.rho_shared = theano.shared(self.rho_shared)
+        if hasattr(self, 'history'):
+            self.history = [theano.shared(h) for h in self.history]
     
     def _unscaled_deltas(self, weights, grads):
-        rho = theano.shared(np.cast[theano.config.floatX](0))
-        history = [theano.shared(w.get_value()*0) for w in weights]
+        #rho = theano.shared(np.cast[theano.config.floatX](0))
+        rho = self.rho_shared
+        #history = [theano.shared(w.get_value()*0) for w in weights]
+        history = self.history
         hist_upd = [rho*h + (1-rho)*g*g for h,g in zip(history, grads)]
         delta = [g/(th.sqrt(h)+self.eps) for g,h in zip(grads, hist_upd)]
         return delta, list(zip(history, hist_upd))+[(rho, th.constant(self.rho))]
 
             
+
+
+
+
+
+
+
