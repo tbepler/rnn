@@ -36,8 +36,8 @@ class Momentum(object):
 
     def __call__(self, deltas):
         if self.momentum > 0:
-            mom_m1 = np.array(1-self.momentum, dtype=theano.config.floatX)
-            vel_upd = [self.momentum*v + mom_m1*d for v,d in zip(self.velocity,deltas)]
+            #mom_m1 = np.array(1-self.momentum, dtype=self.velocity[0].dtype)
+            vel_upd = [self.momentum*v + (1-self.momentum)*d for v,d in zip(self.velocity,deltas)]
             return vel_upd, list(zip(self.velocity, vel_upd))
         return deltas, []
 
