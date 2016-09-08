@@ -126,9 +126,9 @@ class LSTM(object):
         init(w[1:])
         self.ws = theano.shared(w, name=name, borrow=True)
         #self.c0 = theano.shared(np.zeros(units,dtype=dtype),borrow=True)
-        self.c0 = th.zeros(units)
+        self.c0 = th.zeros(units, dtype=dtype)
         #self.y0 = theano.shared(np.zeros(units,dtype=dtype),borrow=True)
-        self.y0 = th.zeros(units)
+        self.y0 = th.zeros(units, dtype=dtype)
         self.name = name
         self.iact = iact
         self.fact = fact
@@ -155,9 +155,9 @@ class LSTM(object):
         self.name = state['name']
         self.ws = theano.shared(state['weights'], borrow=True)
         #self.c0 = theano.shared(state['c0'], borrow=True)
-        self.c0 = th.zeros(state['weights'].shape[1]//4)
+        self.c0 = th.zeros(state['weights'].shape[1]//4, dtype=self.ws.dtype)
         #self.y0 = theano.shared(state['y0'], borrow=True)
-        self.y0 = th.zeros(state['weights'].shape[1]//4)
+        self.y0 = th.zeros(state['weights'].shape[1]//4, dtype=self.ws.dtype)
         acts = state['activations']
         self.iact = acts[0]
         self.fact = acts[1]

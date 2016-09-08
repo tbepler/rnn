@@ -5,25 +5,25 @@ import copy
 
 class NoDecay(object):
     def __call__(self, lr, **kwargs):
-        return lr
+        return lr, []
 
 class GeomDecay(object):
     def __init__(self, rate):
         self.rate = rate
     def __call__(self, lr, iters=1):
-        return lr*self.rate**iters
+        return lr*self.rate**iters, []
 
 class Annealing(object):
     def __init__(self, T):
         self.T = T
     def __call__(self, lr, iters=1):
-        return lr/(1+iters/self.T)
+        return lr/(1+iters/self.T), []
 
 class Momentum(object):
     def __init__(self, momentum, weights):
         self.momentum = momentum
         if momentum > 0:
-            self.velocity = [theano.shared(w.get_value()*0) for w in weights]
+            self.velocity = [theano.shared(np.zeros_like(w.get_value())) for w in weights]
         else:
             self.velocity = []
 
@@ -38,41 +38,41 @@ class Momentum(object):
         if self.momentum > 0:
             #mom_m1 = np.array(1-self.momentum, dtype=self.velocity[0].dtype)
             vel_upd = [self.momentum*v + (1-self.momentum)*d for v,d in zip(self.velocity,deltas)]
+            print('Momentum:')
+            for a,b in vel_upd:
+                print(a.dtype, b.dtype)
             return vel_upd, list(zip(self.velocity, vel_upd))
         return deltas, []
 
 class SGD(object):
-    def __init__(self, learning_rate, momentum=0.9, decay=NoDecay()):
-        self.learning_rate = learning_rate
-        self.momentum = momentum
+    def __init__(self, learning_rate, momentum=0.9, decay=NoDecay(), dtype='float32'):
+        self.learning_rate = np.cast[dtype](learning_rate)
+        self.momentum = np.cast[dtype](momentum)
         self.decay = decay
-        self.iters = theano.shared(0)
 
     def setup(self, weights):
         self.mom = Momentum(self.momentum, weights)
 
     def __getstate__(self):
         d = copy.copy(self.__dict__)
-        d['iters'] = self.iters.get_value()
         return d
 
     def __setstate__(self, s):
         self.__dict__.update(s)
-        self.iters = theano.shared(self.iters)
 
     def _unscaled_deltas(self, weights, grads):
         return grads, []
 
-    def _updates(self, weights, grads, learning_rate):
+    def updates(self, weights, grads, learning_rate):
         delta, updates = self._unscaled_deltas(weights, grads)
         mom_delta, mom_updates = self.mom(delta)
-        nu = self.decay(learning_rate, iters=self.iters)
+        nu, decay_updates = self.decay(learning_rate)
         w_upd = [(w, w-nu*md) for w,md in zip(weights, mom_delta)]
-        return updates + mom_updates + w_upd + [(self.iters, self.iters+1)]
+        return updates + mom_updates + w_upd + decay_updates
 
     def _compile(self, inputs, outputs, weights, grads):
         learning_rate = th.scalar()
-        updates = self._updates(weights, grads, learning_rate)
+        updates = self.updates(weights, grads, learning_rate)
         #from theano.compile.nanguardmode import NanGuardMode
         #mode = NanGuardMode(nan_is_error=True, big_is_error=False, inf_is_error=False)
         #return theano.function([learning_rate]+inputs, outputs, updates=updates, mode=mode)
@@ -94,15 +94,15 @@ class SGD(object):
             self.learning_rate = self.decay(self.learning_rate)
 
 class RMSprop(SGD):
-    def __init__(self, lr, rho=0.95, eps=1e-5, momentum=0.9, decay=NoDecay()):
-        super(RMSprop, self).__init__(lr, momentum=momentum, decay=decay)
-        self.rho = rho
-        self.eps = eps
+    def __init__(self, lr, rho=0.95, eps=1e-5, momentum=0.9, decay=NoDecay(), dtype='float32'):
+        super(RMSprop, self).__init__(lr, momentum=momentum, decay=decay, dtype=dtype)
+        self.rho = np.cast[dtype](rho)
+        self.eps = np.cast[dtype](eps)
 
     def setup(self, weights):
         super(RMSprop, self).setup(weights)
-        self.rho_shared = theano.shared(np.cast[theano.config.floatX](0))
-        self.history = [theano.shared(w.get_value()*0) for w in weights]
+        self.rho_shared = theano.shared(np.cast[self.rho.dtype](0))
+        self.history = [theano.shared(np.zeros_like(w.get_value())) for w in weights]
 
     def __getstate__(self):
         d = super(RMSprop, self).__getstate__()
@@ -126,7 +126,8 @@ class RMSprop(SGD):
         history = self.history
         hist_upd = [rho*h + (1-rho)*g*g for h,g in zip(history, grads)]
         delta = [g/(th.sqrt(h)+self.eps) for g,h in zip(grads, hist_upd)]
-        return delta, list(zip(history, hist_upd))+[(rho, th.constant(self.rho))]
+        hist_upd = list(zip(history, hist_upd))
+        return delta, hist_upd+[(rho, th.constant(self.rho))]
 
             
 
