@@ -6,10 +6,15 @@ from rnn.theano.softmax import logsoftmax
 from rnn.initializers import orthogonal
 
 class Linear(object):
-    def __init__(self, n_in, n_out, init=orthogonal, init_bias=0, dtype=theano.config.floatX, random=np.random, name=None):
-        w = random.randn(n_in+1, n_out).astype(dtype)
-        w[0] = init_bias
-        init(w[1:])
+    def __init__(self, n_in, n_out, init=orthogonal, init_bias=0, dtype=theano.config.floatX, random=np.random, name=None, use_bias=True):
+        if use_bias:
+            w = random.randn(n_in+1, n_out).astype(dtype)
+            w[0] = init_bias
+            init(w[1:])
+        else:
+            w = random.randn(n_in, n_out).astype(dtype)
+            init(w)
+        self.use_bias = use_bias
         self.ws = theano.shared(w, name=name)
         self.name = name
 
@@ -28,7 +33,10 @@ class Linear(object):
         self.ws = theano.shared(state['weights'], borrow=True)
 
     def __call__(self, x):
-        return T.dot(x, self.ws[1:]) + self.ws[0]
+        if self.use_bias:
+            return T.dot(x, self.ws[1:]) + self.ws[0]
+        else:
+            return T.dot(x, self.ws)
 
 class LinearDecoder(object):
     def __init__(self, n_in, n_out, init=orthogonal, dtype=theano.config.floatX, name=None):
