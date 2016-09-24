@@ -19,8 +19,20 @@ class Linear(object):
         self.name = name
 
     @property
-    def weights(self):
+    def shared(self):
         return [self.ws]
+
+    @property
+    def weights(self):
+        if self.use_bias:
+            return [self.ws[1:]]
+        return [self.ws]
+
+    @property
+    def bias(self):
+        if self.use_bias:
+            return [self.ws[0]]
+        return []
     
     def __getstate__(self):
         state = {}

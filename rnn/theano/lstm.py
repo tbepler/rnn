@@ -137,7 +137,13 @@ class LSTM(object):
         self.cact = cact
 
     @property
-    def weights(self): return [self.ws]
+    def shared(self): return [self.ws]
+
+    @property
+    def weights(self): return [self.ws[1:]]
+
+    @property
+    def bias(self): return [self.ws[0]]
 
     @property
     def units(self): return self.ws.get_value(borrow=True).shape[1]//4
