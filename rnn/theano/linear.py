@@ -35,14 +35,18 @@ class Linear(object):
         return []
     
     def __getstate__(self):
-        state = {}
-        state['weights'] = self.ws.get_value(borrow=True)
-        state['name'] = self.name
+        state = self.__dict__.copy()
+        state['ws'] = self.ws.get_value(borrow=True)
         return state
 
     def __setstate__(self, state):
-        self.name = state['name']
-        self.ws = theano.shared(state['weights'], borrow=True)
+        if 'ws' in state:
+            self.__dict__.update(state)
+            self.ws = theano.shared(self.ws, borrow=True) 
+        else:
+            self.name = state['name']
+            self.ws = theano.shared(state['weights'], borrow=True)
+            self.use_bias = True #just take a guess! ...
 
     def __call__(self, x):
         if self.use_bias:
