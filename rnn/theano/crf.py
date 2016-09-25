@@ -53,12 +53,12 @@ class LikelihoodAccuracy(Loss):
 
 class CRF(object):
     def __init__(self, ins, labels, init=orthogonal, name=None, dtype=theano.config.floatX
-            , loss=LikelihoodCrossEntropy()):
-        w_trans = np.random.randn(labels, 1+ins, labels).astype(dtype)
+                , loss=LikelihoodCrossEntropy(), random=np.random):
+        w_trans = random.randn(labels, 1+ins, labels).astype(dtype)
         w_trans[:,0] = 0
         for i in xrange(labels):
             init(w_trans[i, 1:])
-        w_init = np.random.randn(1+ins, labels).astype(dtype)
+        w_init = random.randn(1+ins, labels).astype(dtype)
         w_init[0] = 0
         init(w_init[1:])
         self.w_trans = theano.shared(w_trans, borrow=True)
@@ -78,11 +78,19 @@ class CRF(object):
         self._loss = state['loss']
 
     @property
-    def weights(self):
+    def shared(self):
         return [self.w_trans, self.w_init]
 
-    @weights.setter
-    def weights(self, ws):
+    @property
+    def weights(self):
+        return [self.w_trans[1:], self.w_init[1:]]
+
+    @property
+    def bias(self):
+        return [self.w_trans[0], self.w_init[0]]
+
+    @shared.setter
+    def shared(self, ws):
         self.w_trans.set_value(ws[0])
         self.w_init.set_value(ws[1])
 
