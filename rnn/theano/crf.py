@@ -56,7 +56,7 @@ class CRF(object):
                 , loss=LikelihoodCrossEntropy(), random=np.random):
         w_trans = random.randn(labels, 1+ins, labels).astype(dtype)
         w_trans[:,0] = 0
-        for i in xrange(labels):
+        for i in range(labels):
             init(w_trans[i, 1:])
         w_init = random.randn(1+ins, labels).astype(dtype)
         w_init[0] = 0
