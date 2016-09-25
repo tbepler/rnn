@@ -104,8 +104,8 @@ class CRF(object):
             x0 = T.shape_padright(x0)
             xt = logsumexp(A+x0, axis=-2) 
             return xt
-        F = theano.scan(step, trans, inits)
-        F = T.concatenate([inits, F], axis=0)
+        F, _ = theano.scan(step, trans, inits)
+        F = T.concatenate([T.shape_padleft(inits), F], axis=0)
         return F
     
     def backward(self, X):
@@ -115,8 +115,8 @@ class CRF(object):
             x0 = logsumexp(A+xt, axis=-1)
             return x0
         b_end = T.zeros(trans.shape[:-1])
-        B = theano.scan(step, trans[::-1], b_end)
-        B = T.concatenate([B[::-1], b_end], axis=0)
+        B, _ = theano.scan(step, trans[::-1], b_end)
+        B = T.concatenate([B[::-1], T.shape_padleft(b_end)], axis=0)
         return B
 
     def posterior(self, X):
