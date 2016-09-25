@@ -2,8 +2,8 @@ import theano
 import theano.tensor as T
 import numpy as np
 
-from softmax import logsoftmax, logsumexp
-from loss import cross_entropy, confusion, accuracy
+from rnn.theano.softmax import logsoftmax, logsumexp
+from rnn.theano.loss import cross_entropy, confusion, accuracy
 from rnn.initializers import orthogonal
 
 class Loss(object):
