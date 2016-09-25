@@ -114,7 +114,7 @@ class CRF(object):
             xt = xt.dimshuffle(0, 'x', 1)
             x0 = logsumexp(A+xt, axis=-1)
             return x0
-        b_end = T.zeros(trans.shape[:-1])
+        b_end = T.zeros(trans.shape[1:-1], dtype=X.dtype)
         B, _ = theano.scan(step, trans[::-1], b_end)
         B = T.concatenate([B[::-1], T.shape_padleft(b_end)], axis=0)
         return B
