@@ -53,26 +53,36 @@ class LikelihoodAccuracy(Loss):
 
 class CRF(object):
     def __init__(self, ins, labels, init=orthogonal, name=None, dtype=theano.config.floatX
-                , loss=LikelihoodCrossEntropy(), random=np.random):
-        w_trans = random.randn(labels, 1+ins, labels).astype(dtype)
-        w_trans[:,0] = 0
-        for i in range(labels):
-            init(w_trans[i, 1:])
-        w_init = random.randn(1+ins, labels).astype(dtype)
-        w_init[0] = 0
-        init(w_init[1:])
+                , loss=LikelihoodCrossEntropy(), random=np.random, use_bias=True):
+        self.use_bias = use_bias
+        if use_bias:
+            w_trans = random.randn(labels, 1+ins, labels).astype(dtype)
+            w_trans[:,0] = 0
+            for i in range(labels):
+                init(w_trans[i, 1:])
+            w_init = random.randn(1+ins, labels).astype(dtype)
+            w_init[0] = 0
+            init(w_init[1:])
+        else:
+            w_trans = random.randn(labels, ins, labels).astype(dtype)
+            for i in range(labels):
+                init(w_trans[i])
+            w_init = random.randn(ins, labels).astype(dtype)
+            init(w_init)
         self.w_trans = theano.shared(w_trans, borrow=True)
         self.w_init = theano.shared(w_init, borrow=True)
         self._loss = loss
 
     def __getstate__(self):
         state = {}
+        state['use_bias'] = self.use_bias
         state['w_trans'] = self.w_trans.get_value(borrow=True)
         state['w_init'] = self.w_init.get_value(borrow=True)
         state['loss'] = self._loss
         return state
 
     def __setstate__(self, state):
+        self.use_bias = state.get('use_bias', True)
         self.w_trans = theano.shared(state['w_trans'], borrow=True)
         self.w_init = theano.shared(state['w_init'], borrow=True)
         self._loss = state['loss']
@@ -83,11 +93,15 @@ class CRF(object):
 
     @property
     def weights(self):
-        return [self.w_trans[1:], self.w_init[1:]]
+        if self.use_bias:
+            return [self.w_trans[:,1:], self.w_init[1:]]
+        return [self.w_trans, self.w_init]
 
     @property
     def bias(self):
-        return [self.w_trans[0], self.w_init[0]]
+        if self.use_bias:
+            return [self.w_trans[:,0], self.w_init[0]]
+        return []
 
     @shared.setter
     def shared(self, ws):
@@ -98,8 +112,12 @@ class CRF(object):
         return self._loss(self, X, Y, **kwargs)
 
     def forward(self, X):
-        inits = logsoftmax(T.dot(X[0], self.w_init[1:]) + self.w_init[0], axis=-1)
-        trans = logsoftmax(T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0], axis=-1)
+        if self.use_bias:
+            inits = logsoftmax(T.dot(X[0], self.w_init[1:]) + self.w_init[0], axis=-1)
+            trans = logsoftmax(T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0], axis=-1)
+        else:
+            inits = logsoftmax(T.dot(X[0], self.w_init), axis=-1)
+            trans = logsoftmax(T.dot(X[1:], self.w_trans), axis=-1)
         def step(A, x0):
             x0 = T.shape_padright(x0)
             xt = logsumexp(A+x0, axis=-2) 
@@ -109,7 +127,10 @@ class CRF(object):
         return F
     
     def backward(self, X):
-        trans = logsoftmax(T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0], axis=-1)
+        if self.use_bias:
+            trans = logsoftmax(T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0], axis=-1)
+        else:
+            trans = logsoftmax(T.dot(X[1:], self.w_trans), axis=-1)
         def step(A, xt):
             xt = xt.dimshuffle(0, 'x', 1)
             x0 = logsumexp(A+xt, axis=-1)
@@ -125,8 +146,12 @@ class CRF(object):
         return logsoftmax(F+B, axis=-1)
         
     def logprob(self, X, Y):
-        inits = T.dot(X[0], self.w_init[1:]) + self.w_init[0]
-        trans = T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0]
+        if self.use_bias:
+            inits = T.dot(X[0], self.w_init[1:]) + self.w_init[0]
+            trans = T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0]
+        else:
+            inits = T.dot(X[0], self.w_init)
+            trans = T.dot(X[1:], self.w_trans)
         k,b = Y.shape
         mesh = T.mgrid[0:k-1,0:b]
         i,j = mesh[0], mesh[1]
