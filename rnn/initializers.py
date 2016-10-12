@@ -2,8 +2,8 @@ import numpy as np
 import math
 
 def xavier(X):
-    m,n = X.shape[0], X.shape[1]
-    X /= math.sqrt(m+n-1)
+    n = sum(X.shape) - X.ndim + 1
+    X /= math.sqrt(n)
 
 def orthogonal(X):
     m,n = X.shape
