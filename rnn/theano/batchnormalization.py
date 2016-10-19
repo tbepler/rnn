@@ -7,16 +7,17 @@ from theano.tensor.nnet.bn import batch_normalization
 sys.path.append("../../")
 
 class BatchNormalizer(object):
-    def __init__(self, n_in):
+    def __init__(self, n_in, epsilon=1e-5):
         self.gamma = theano.shared(value = np.ones((n_in), dtype=theano.config.floatX), name='gamma')
         self.beta = theano.shared(value = np.zeros((n_in), dtype=theano.config.floatX), name='beta')
+        self.epsilon = epsilon
 
     def weights(self): return [self.gamma, self.beta]
 
     def scan(self, inputs):
         gamma = self.gamma.get_value()
         beta = self.beta.get_value()
-        bn_output = batch_normalization(inputs = inputs, gamma = self.gamma, beta = self.beta, mean = inputs.mean((1,2), keepdims=True), std = th.minimum(th.maximum(inputs.std((1,2), keepdims=True), 0.1**4), 10**4), mode='high_mem')
+        bn_output = batch_normalization(inputs = inputs, gamma = self.gamma, beta = self.beta, mean = 0, std = 1, mode='high_mem')
         return bn_output
 
     def delete(self, del_units, history):

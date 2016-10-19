@@ -3,7 +3,7 @@ import theano.tensor as T
 import numpy as np
 
 from softmax import logsoftmax
-from rnn.initializers import orthogonal
+from initializers import orthogonal
 
 class Linear(object):
     def __init__(self, n_in, n_out, init=orthogonal, dtype=theano.config.floatX, name=None):

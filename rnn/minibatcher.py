@@ -3,7 +3,7 @@ import numpy as np
 import random
 
 class BatchIter(object):
-    def __init__(self, data, size, shuffle=True, mask=True, xydata=True):
+    def __init__(self, data, size, shuffle=True, mask=True, xydata=True, single_out=True):
         self.xydata = xydata
         self.size = size
         self.use_mask = mask
@@ -11,8 +11,8 @@ class BatchIter(object):
         if self.xydata:
         # if in the form ([X1, X2, X3, ...], [Y1, Y2, Y3, ...]) where each element is batched data, this should separate the data into [X,Y] batches of the form ([X1, Y1], [X2, Y2], ...)
             if self.use_mask:
-                xmask, x = self.masking(data[0])
-                ymask, y = self.masking(data[1])
+                xmask, x = self.masking(data[0], single_out)
+                ymask, y = self.masking(data[1], single_out)
                 self.mask = zip(xmask, ymask)
             #self.data = np.concatenate((data), axis = 1).resize(data.size/(2*size) + 1,2,size)
             else:
@@ -22,7 +22,7 @@ class BatchIter(object):
             self.data = zip(x, y)
         else:
             if self.use_mask:
-                xmask, x = self.masking(data)
+                xmask, x = self.masking(data, single_out)
                 self.mask = xmask
                 self.data = x
             else:
@@ -65,6 +65,12 @@ class BatchIter(object):
             y = np.transpose(y).tolist()
             mask = np.transpose(mask).tolist()
             if self.use_mask:
+                #print "X: %s" % x
+                #print "Y: %s" % y
+                #print "Mask: %s" % mask
+                #print np.array(x).shape
+                #print np.array(y).shape
+                #print np.array(mask).shape
                 yield x, y, mask 
             else:
                 yield x, y
@@ -97,14 +103,49 @@ class BatchIter(object):
         #         yield X[:m,:n]
         #     #yield self.X[:,i:i+size], self.mask[:,i:i+size]
 
-    def masking(self, data):
+    def masking(self, data, single_out):
         dtype = self.dtype
         batch_count = int(math.ceil(len(data)/float(self.size)))
         rows_needed = batch_count*self.size - len(data)
-        size_array = np.append(np.array([len(data[i]) for i in range(len(data))]), np.zeros(rows_needed))
-        mask = np.arange(max(size_array)) < size_array[:,None]
-        zero_mask = np.zeros(mask.shape, dtype = dtype)
-        zero_mask[mask] = np.hstack((data[:]))
+        #print data.shape
+        #print [len(a) for a in data]
+        #print "Size array: %s" % unpadded_size_array
+        print data.shape
+        if single_out:
+            size_array = np.append(np.array([len(data[i]) for i in range(len(data))]), np.zeros(rows_needed))
+            mask = np.arange(max(size_array)) < size_array[:,None]
+            zero_mask = np.zeros(mask.shape, dtype = dtype)
+            zero_mask[mask] = np.hstack((data[:]))
+        else:
+            unpadded_size_array = np.reshape(np.array([len(i[1]) for i in list(np.ndenumerate(data))]), data.shape)
+            if len(data.shape) == 1:
+                size_array = np.pad(unpadded_size_array, ((0,rows_needed)), mode="constant", constant_values=0)
+                mask = np.arange(np.array(max(array))) < size_array[:,None]
+                print "Mask shape:"
+                print mask.shape
+                zero_mask = np.zeros(mask.shape, dtype = dtype)
+                #print "Zero mask: %s" % zero_mask
+                #print np.hstack((data[:,:]))
+                #print mask
+                zero_mask[mask] = np.hstack(np.hstack((data[:])))
+                #print "Zero shape: "
+                #print zero_mask.shape
+            else:
+                unpadded_size_array = np.reshape(np.array([len(i[1]) for i in list(np.ndenumerate(data))]), data.shape)
+                size_array = np.pad(unpadded_size_array, ((0,rows_needed),(0,0)), mode="constant", constant_values=0)
+                mask = np.arange(np.array(max([max(array) for array in size_array]))) < size_array[:,:,None]
+                #print mask.shape
+                #print "Mask shape:"
+                #print mask.shape
+                zero_mask = np.zeros(mask.shape, dtype = dtype)
+                #print "Zero mask: %s" % zero_mask
+                #print np.hstack((data[:,:]))
+                #print mask
+                zero_mask[mask] = np.hstack(np.hstack((data[:,:])))
+                #print "Zero shape: "
+                #print zero_mask.shape
+        #print zero_mask
+        #print data
         #mask = np.invert(mask)
         mask = mask.astype(np.int8)
         return 1*mask, zero_mask

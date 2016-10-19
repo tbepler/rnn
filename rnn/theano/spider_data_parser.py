@@ -61,7 +61,7 @@ def import_seq_data(spider_file):
 if __name__ == '__main__':
     currentTime = datetime.datetime.now() 
     startTime = currentTime
-    output = import_seq_data("seq+ss_train.txt")
-    np.save("train_predata", output)
-    test_output = import_seq_data("seq+ss_test1199.txt")
-    np.save("test_predata", test_output)
+    output = import_seq_data("/n/scratch2/rkc10/seq+ss_train.txt")
+    np.save("/n/scratch2/rkc10/train_predata", output)
+    test_output = import_seq_data("/n/scratch2/rkc10/seq+ss_test1199.txt")
+    np.save("/n/scratch2/rkc10/test_predata", test_output)

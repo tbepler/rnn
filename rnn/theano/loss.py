@@ -14,6 +14,13 @@ def confusion(Yh, Y, n):
     C = T.set_subtensor(C[i,j,Y,Yh], 1)
     return C
 
+def multiconfusion(Yh, Y, n):
+    shape = list(Yh.shape) + [n, n]
+    C = T.zeros(shape, dtype='int64')
+    i,j,k = T.mgrid[0:C.shape[0], 0:C.shape[1], 0:C.shape[2]]
+    #C = T.set_subtensor(C[i,j,k,Y,Yh], 1)
+    return C
+
 def accuracy(Yh, Y, step=1):
     from theano.tensor.nnet import sigmoid
     i,j = T.mgrid[0:Y.shape[0], 0:Y.shape[1]]

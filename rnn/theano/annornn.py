@@ -1,3 +1,8 @@
+from get_unused_gpus import get_unused_gpus
+gpu = get_unused_gpus()
+print gpu
+import os
+os.environ["THEANO_FLAGS"] = "floatX=float32,device=" + gpu + ",gcc.cxxflags='-march=core2',lib.cnmem=0.9,scan.allow_gc=True,base_compiledir='/tmp/rkc10/.theano'"
 import theano
 import theano.tensor as T
 import numpy as np
@@ -26,7 +31,7 @@ def null_func(*args, **kwargs):
     pass
 
 class AnnoRNN(object):
-    def __init__(self, n_in, units, layers, labels, loss_scaler, decoder=linear.Linear, itype='int32', solver=solvers.RMSprop(0.05, decay=solvers.GeomDecay(0.999))):
+    def __init__(self, n_in, units, layers, labels, loss_scaler, decoder=linear.Linear, itype='int32', solver=solvers.RMSprop(0.001, decay=solvers.GeomDecay(0.999))):
        self.data = [T.matrix(dtype=itype), T.matrix(dtype=itype)]
        self.x = self.data[0].astype(itype) # T.matrix(dtype=itype)
        self.y = self.data[1].astype(itype) # T.matrix(dtype=itype)
@@ -279,5 +284,6 @@ if __name__ == '__main__':
     print "Testing time: %s" % (datetime.now() - currentTime)
     currentTime = datetime.now()
     print "Total runtime: %s" % (datetime.now() - startTime) 
+    print "Finishing time: %s" % datetime.now()
 
     sys.stdout = orig_stdout

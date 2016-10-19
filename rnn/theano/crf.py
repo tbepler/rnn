@@ -3,8 +3,8 @@ import theano.tensor as T
 import numpy as np
 
 from softmax import logsoftmax, logsumexp
-from loss import cross_entropy, confusion, accuracy
-from rnn.initializers import orthogonal
+from loss import cross_entropy, confusion, accuracy, multiconfusion
+from initializers import orthogonal
 
 class Loss(object):
     def __call__(self, crf, X, Y, mask=None, flank=0):
@@ -53,7 +53,7 @@ class LikelihoodAccuracy(Loss):
 
 class CRF(object):
     def __init__(self, ins, labels, init=orthogonal, name=None, dtype=theano.config.floatX
-            , loss=LikelihoodCrossEntropy()):
+            , loss=LikelihoodCrossEntropy(), label_sects=None):
         w_trans = np.random.randn(labels, 1+ins, labels).astype(dtype)
         w_trans[:,0] = 0
         for i in xrange(labels):
@@ -65,6 +65,7 @@ class CRF(object):
         self.w_init = theano.shared(w_init, borrow=True)
         self._loss = loss
         self.labels = labels
+        self.label_sects = label_sects
 
     def __getstate__(self):
         state = {}
@@ -177,7 +178,42 @@ class CRF(object):
         num = T.concatenate([T.shape_padleft(inits), trans[i,j,Y[:-1]]], axis=0)
         return logsoftmax(num, axis=-1)
 
+class MultiCRF(CRF):
+    def __init__(self, ins, labels, label_sects, init=orthogonal, name=None, dtype=theano.config.floatX
+                , loss=LikelihoodCrossEntropy()):
+        CRF.__init__(self, ins, labels, init, name, dtype, loss)
+        self.crf = []
+        self.label_sects = label_sects
+        for i in range(label_sects):
+            new_crf = CRF(ins, labels, init=init, name=name, dtype=dtype, loss=loss)
+            self.crf += [new_crf]
 
-        
-            
+    def loss(self, X, Y, **kwargs):
+        axis = 1
+        Ysect = [Y[:,i,:] for i in range(self.label_sects)]
+        L = []
+        C = []
+        Yh = []
+        for i in range(self.label_sects):
+            l,c,yh,y = self.crf[i].loss(X, Ysect[i], **kwargs)
+            L += [l]
+            #C += [c]
+            Yh += [yh]
+        L = sum(L)
+        #C = T.stack(C, axis=0)
+        Yh = T.stack(Yh, axis=1)
+        #C = multiconfusion(T.argmax(Yh,axis=-1), Y, Yh.shape[-1])
+        #C = T.shape_padright(T.shape_padright(T.eq(Y,Yh)))
+        C = T.eq(Y,T.argmax(Yh, axis=-1))
+        return L, C, Yh, Y
 
+    def update(self, change, history=None):
+        for crf in self.crf:
+            crf.update(change, history)
+
+    @property
+    def weights(self):
+        weights = []
+        for crf in self.crf:
+            weights += crf.weights
+        return weights
