@@ -188,14 +188,30 @@ class LSTM(object):
         return y0, c0
 
     def scanl(self, x, y0=None, c0=None, mask=None, scan_kwargs={}, **kwargs):
+        ## reshape from (batch,length,...) to (length,batch,...)
+        x = x.dimshuffle(1,0,2)
+        if mask is not None:
+            mask = mask.dimshuffle(1,0)
+
         y0, c0 = self.build_init_states(x, y0, c0)
-        return scanl(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
+        h,c = scanl(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
                      , gact=self.gact, cact=self.cact, scan_kwargs=scan_kwargs, **kwargs)
 
+        ## reshape back
+        return h.dimshuffle(1,0,2), c.dimshuffle(1,0,2)
+
     def scanr(self, x, y0=None, c0=None, mask=None, scan_kwargs={}, **kwargs):
+        ## reshape from (batch,length,...) to (length,batch,...)
+        x = x.dimshuffle(1,0,2)
+        if mask is not None:
+            mask = mask.dimshuffle(1,0)
+
         y0, c0 = self.build_init_states(x, y0, c0)
-        return scanr(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
-                     , gact=self.gact, cact=self.cact, scan_kwargs={}, **kwargs)
+        h,c = scanr(self.ws, y0, c0, x, mask=mask, iact=self.iact, fact=self.fact, oact=self.oact
+                     , gact=self.gact, cact=self.cact, scan_kwargs=scan_kwargs, **kwargs)
+
+        ## reshape back
+        return h.dimshuffle(1,0,2), c.dimshuffle(1,0,2)
 
     def foldl(self, x, y0=None, c0=None, mask=None, **kwargs):
         if y0 is None:

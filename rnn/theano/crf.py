@@ -112,6 +112,7 @@ class CRF(object):
         return self._loss(self, X, Y, **kwargs)
 
     def forward(self, X):
+        X = X.dimshuffle(1,0,2) ## reshape from (batch,length,features)
         if self.use_bias:
             inits = logsoftmax(T.dot(X[0], self.w_init[1:]) + self.w_init[0], axis=-1)
             trans = logsoftmax(T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0], axis=-1)
@@ -124,9 +125,10 @@ class CRF(object):
             return xt
         F, _ = theano.scan(step, trans, inits)
         F = T.concatenate([T.shape_padleft(inits), F], axis=0)
-        return F
+        return F.dimshuffle(1,0,2) ## reshape back to (batch,length,features)
     
     def backward(self, X):
+        X = X.dimshuffle(1,0,2) ## reshape from (batch,length,features)
         if self.use_bias:
             trans = logsoftmax(T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0], axis=-1)
         else:
@@ -138,14 +140,19 @@ class CRF(object):
         b_end = T.zeros(trans.shape[1:-1], dtype=X.dtype)
         B, _ = theano.scan(step, trans[::-1], b_end)
         B = T.concatenate([B[::-1], T.shape_padleft(b_end)], axis=0)
-        return B
+        return B.dimshuffle(1,0,2) ## reshape back to (batch,length,features)
 
     def posterior(self, X):
         F = self.forward(X)
         B = self.backward(X)
         return logsoftmax(F+B, axis=-1)
         
-    def logprob(self, X, Y):
+    def logprob(self, X, Y, mask=None, **kwargs):
+        X = X.dimshuffle(1,0,2) ## reshape from (batch,length,features)
+        Y = Y.dimshuffle(1,0)
+        if mask is not None:
+            mask = mask.dimshuffle(1,0)
+
         if self.use_bias:
             inits = T.dot(X[0], self.w_init[1:]) + self.w_init[0]
             trans = T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0]
@@ -155,8 +162,20 @@ class CRF(object):
         k,b = Y.shape
         mesh = T.mgrid[0:k-1,0:b]
         i,j = mesh[0], mesh[1]
-        num = T.concatenate([T.shape_padleft(inits), trans[i,j,Y[:-1]]], axis=0)
-        return logsoftmax(num, axis=-1)
+        if mask is not None: #integrate over the masked positions
+            def step(A, yt, mt, p0):
+                p0 = T.shape_padright(p0)
+                B = A + p0
+                observed = B[T.arange(yt.shape[0]),yt]
+                unobserved = logsumexp(B, axis=-2)
+                mt = T.shape_padright(mt)
+                pt = T.switch(T.eq(mt, 0), unobserved, observed)
+                return pt
+            P, _ = theano.scan(step, [trans, Y[:-1], mask[:-1]], inits, **kwargs)
+        else:
+            P = trans[i,j,Y[:-1]]
+        P = T.concatenate([T.shape_padleft(inits), P], axis=0)
+        return logsoftmax(P, axis=-1).dimshuffle(1,0,2) ##reshape back
 
 
         
