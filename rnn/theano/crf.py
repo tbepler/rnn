@@ -146,6 +146,57 @@ class CRF(object):
         F = self.forward(X)
         B = self.backward(X)
         return logsoftmax(F+B, axis=-1)
+
+
+    def viterbi(self, X, mask=None, **kwargs):
+        X = X.dimshuffle(1,0,2) ## reshape from (batch,length,features)
+        if mask is not None:
+            mask = mask.dimshuffle(1,0)
+
+        ## compute the transition probabilities given the input
+        if self.use_bias:
+            inits = logsoftmax(T.dot(X[0], self.w_init[1:]) + self.w_init[0], axis=-1)
+            trans = logsoftmax(T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0], axis=-1)
+        else:
+            inits = logsoftmax(T.dot(X[0], self.w_init), axis=-1)
+            trans = logsoftmax(T.dot(X[1:], self.w_trans), axis=-1)
+
+        ## viterbi step
+        def step(A, p0):
+            p0 = T.shape_padright(p0)
+            P = A + p0
+            tt = P.argmax(axis=-2)
+            pt = P.max(axis=-2)
+            return pt, tt
+        [P, Tb], _ = theano.scan(step, trans, [inits, None], *kwargs)
+        P = T.concatenate([T.shape_padleft(inits), P], axis=0)
+        Tb = T.concatenate([Tb, T.zeros_like(Tb[0:1])], axis=0)
+
+        J = T.arange(Tb.shape[1])
+        ## traceback the ML path
+        def step(pt, tt, mt, i0):
+            # if position is masked
+            masked_it = T.zeros_like(i0) - 1
+            masked_p = T.zeros_like(pt[:,0])
+            # if i0 is undefined (-1)
+            start_it = pt.argmax(axis=-1)
+            start_p = pt.max(axis=-1)
+            # if continuing a path
+            cont_it = tt[J,i0]
+            cont_p = pt[J,cont_it]
+            # switch on the conditions
+            _it = T.switch(T.eq(i0, -1), start_it, cont_it)
+            _p = T.switch(T.eq(i0, -1), start_p, cont_p)
+            it = T.switch(T.eq(mt, 0), masked_it, _it)
+            p = T.switch(T.eq(mt, 0), masked_p, _p)
+            return it, p
+        start = T.zeros_like(Tb[0,:,0]) - 1
+        [path, probs], _ = theano.scan(step, [P[::-1], Tb[::-1], mask[::-1]], [start, None])
+        path = path[::-1].dimshuffle(1, 0) # reshape back
+        probs = probs[::-1].dimshuffle(1, 0)
+
+        return path, probs
+        
         
     def logprob(self, X, Y, mask=None, **kwargs):
         X = X.dimshuffle(1,0,2) ## reshape from (batch,length,features)
@@ -154,11 +205,11 @@ class CRF(object):
             mask = mask.dimshuffle(1,0)
 
         if self.use_bias:
-            inits = T.dot(X[0], self.w_init[1:]) + self.w_init[0]
-            trans = T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0]
+            inits = logsoftmax(T.dot(X[0], self.w_init[1:]) + self.w_init[0], axis=-1)
+            trans = logsoftmax(T.dot(X[1:], self.w_trans[:,1:]) + self.w_trans[:,0], axis=-1)
         else:
-            inits = T.dot(X[0], self.w_init)
-            trans = T.dot(X[1:], self.w_trans)
+            inits = logsoftmax(T.dot(X[0], self.w_init), axis=-1)
+            trans = logsoftmax(T.dot(X[1:], self.w_trans), axis=-1)
         k,b = Y.shape
         mesh = T.mgrid[0:k-1,0:b]
         i,j = mesh[0], mesh[1]
